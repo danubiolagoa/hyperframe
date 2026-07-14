@@ -1,5 +1,12 @@
 import { useEffect } from 'react'
 import { useStore } from './store'
+import {
+  clearAutosave,
+  openProjectFile,
+  saveProject,
+  saveProjectAs,
+  writeAutosave,
+} from './io/fileio'
 import TopBar from './components/TopBar'
 import ToolBar from './components/ToolBar'
 import StatusBar from './components/StatusBar'
@@ -20,7 +27,40 @@ export default function App() {
 
   // atalhos globais
   useEffect(() => {
+    const saveNow = async (saveAs: boolean) => {
+      const st = useStore.getState()
+      try {
+        const path = saveAs
+          ? await saveProjectAs(st.project, st.fileName)
+          : await saveProject(st.project, st.fileName)
+        if (path) {
+          st.markSaved(path)
+          clearAutosave()
+        }
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err))
+      }
+    }
+    const openNow = async () => {
+      try {
+        const r = await openProjectFile()
+        if (r) useStore.getState().loadProject(r.project, r.fileName)
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err))
+      }
+    }
     const onKey = (e: KeyboardEvent) => {
+      // ⌘S / ⇧⌘S / ⌘O funcionam mesmo com foco em inputs
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        void saveNow(e.shiftKey)
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault()
+        void openNow()
+        return
+      }
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')
         return
@@ -68,6 +108,23 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // autosave: grava rascunho no localStorage ~2 s após cada mudança no projeto
+  useEffect(() => {
+    let timer: number | undefined
+    const unsub = useStore.subscribe((s, prev) => {
+      if (s.project === prev.project) return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const st = useStore.getState()
+        if (st.dirty) writeAutosave(st.project, st.fileName)
+      }, 2000)
+    })
+    return () => {
+      unsub()
+      window.clearTimeout(timer)
+    }
   }, [])
 
   return (

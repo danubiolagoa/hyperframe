@@ -1,4 +1,5 @@
 import {
+  columnHalfExtents,
   pointInPolygon,
   projectOnSegment,
   type Beam,
@@ -47,11 +48,12 @@ export interface HitContext {
 
 /** hit-test com prioridade: pilares > cargas de parede > regiões de carga > vigas > lajes */
 export function hitTest(p: Vec2, ctx: HitContext): ElementRef | null {
-  // pilares — retângulo expandido 0,15 m
+  // pilares — caixa envolvente expandida 0,15 m
   for (let i = ctx.columns.length - 1; i >= 0; i--) {
     const c = ctx.columns[i]
-    const hx = (c.rotationDeg === 0 ? c.section.h : c.section.bw) / 2 + 0.15
-    const hy = (c.rotationDeg === 0 ? c.section.bw : c.section.h) / 2 + 0.15
+    const ext = columnHalfExtents(c)
+    const hx = ext.dx + 0.15
+    const hy = ext.dy + 0.15
     if (Math.abs(p.x - c.pos.x) <= hx && Math.abs(p.y - c.pos.y) <= hy) {
       return { kind: 'column', id: c.id }
     }

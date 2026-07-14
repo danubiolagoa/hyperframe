@@ -7,6 +7,7 @@ import type {
   LoadCombo,
 } from '../analysis/types'
 import { concreteProps, coverFor, fyd as fydOf } from '../nbr/nbr6118/materials'
+import { columnSectionInfo } from '../model/columnSection'
 import {
   designColumnSection,
   minimumMoment,
@@ -44,16 +45,23 @@ export function runColumnDesign(
     })
     if (memberIds.length === 0) continue
 
-    const { bw, h } = col.section
-    const ac = bw * h
+    const info = columnSectionInfo(col.section)
+    const ac = info.A
     const sec: ColumnSectionDef = {
-      bw,
-      h,
+      bw: info.bu,
+      h: info.bv,
       cover,
       fcd: cp.fcd,
       fyd: fydV,
       es: project.settings.steel.Es,
+      shape: info.kind,
+      polygon: info.polygon,
+      ac: info.A,
+      minDim: info.minDim,
     }
+    // raios de giração por direção (esbeltez)
+    const iU = Math.sqrt(info.Iu / info.A)
+    const iV = Math.sqrt(info.Iv / info.A)
 
     interface RawDemand extends ColumnDemandPoint {
       lambdaU: number
@@ -91,9 +99,9 @@ export function runColumnDesign(
         ndMax = Math.max(ndMax, nd)
 
         // direção V: momentos Mz (gradiente ao longo de h)
-        const mdV = directionMoment(nd, h, le, ac, cp.fcd, mz0, mzL)
+        const mdV = directionMoment(nd, info.bv, iV, le, ac, cp.fcd, mz0, mzL)
         // direção U: momentos My (gradiente ao longo de bw)
-        const mdU = directionMoment(nd, bw, le, ac, cp.fcd, my0, myL)
+        const mdU = directionMoment(nd, info.bu, iU, le, ac, cp.fcd, my0, myL)
 
         raw.push({
           label: combo.label,
@@ -146,6 +154,7 @@ export function runColumnDesign(
       columnId: col.id,
       name: col.name,
       section: col.section,
+      sectionLabel: info.label,
       nd: worst.nd,
       mdU: worst.mu,
       mdV: worst.mv,
@@ -175,6 +184,7 @@ export function runColumnDesign(
 function directionMoment(
   nd: number,
   hDir: number,
+  iDir: number,
   le: number,
   ac: number,
   fcd: number,
@@ -196,6 +206,7 @@ function directionMoment(
   const sl = slenderness({
     le,
     hDir,
+    i: iDir,
     nd,
     ac,
     fcd,

@@ -54,22 +54,61 @@ export interface SectionRect {
   h: number
 }
 
+/** Seção circular de pilar (diâmetro, m) */
+export interface SectionCircle {
+  shape: 'circle'
+  d: number
+}
+
+/**
+ * Seção em L: caixa envolvente b×h com abas de espessura tb (aba vertical,
+ * ao longo de b) e th (aba horizontal, ao longo de h). Em m.
+ */
+export interface SectionLShape {
+  shape: 'L'
+  b: number
+  h: number
+  tb: number
+  th: number
+}
+
+/** Seção de pilar: retangular (shape ausente em arquivos antigos), circular ou em L */
+export type ColumnSection = ({ shape?: 'rect' } & SectionRect) | SectionCircle | SectionLShape
+
 export interface Column {
   id: string
   /** P1, P2… */
   name: string
-  /** posição do centro em planta, m */
+  /** posição do CENTRÓIDE da seção em planta, m */
   pos: Vec2
-  section: SectionRect
+  section: ColumnSection
   /**
-   * 0  → dimensão `h` da seção ao longo do eixo global X
-   * 90 → dimensão `h` ao longo do eixo global Y
+   * 0   → dimensão `h` da seção ao longo do eixo global X
+   * 90  → dimensão `h` ao longo do eixo global Y
+   * 180/270 → idem, invertidos (relevante p/ seções em L)
    */
-  rotationDeg: 0 | 90
+  rotationDeg: 0 | 90 | 180 | 270
   /** nível da base (normalmente a fundação) */
   baseLevelId: string
   /** nível do topo (normalmente o último pavimento) */
   topLevelId: string
+}
+
+/**
+ * Furo/abertura que atravessa a viga na direção da largura —
+ * verificação de dispensa pela NBR 6118 §13.2.5.2.
+ */
+export interface BeamOpening {
+  id: string
+  /** posição do CENTRO do furo ao longo do eixo da viga (desde o 1º vértice), m */
+  x: number
+  /** comprimento do furo ao longo do eixo, m */
+  width: number
+  /** altura do furo, m */
+  height: number
+  /** desvio do centro do furo em relação ao meio da altura da viga (+ p/ cima), m */
+  yOffset: number
+  label?: string
 }
 
 export interface Beam {
@@ -79,6 +118,13 @@ export interface Beam {
   /** polilinha (≥ 2 vértices), m. Cada trecho entre apoios vira um vão na análise. */
   path: Vec2[]
   section: SectionRect
+  /**
+   * Seção por trecho da polilinha (mesmo índice dos segmentos; null/ausente =
+   * usa `section`). Mudança de seção corta o vão de dimensionamento no ponto.
+   */
+  segmentSections?: (SectionRect | null)[]
+  /** furos que atravessam a alma (NBR 6118 §13.2.5) */
+  openings?: BeamOpening[]
 }
 
 export interface Slab {
@@ -97,29 +143,72 @@ export interface Slab {
   liveLoadLabel?: string
 }
 
-/** Carga linear permanente sobre uma viga (alvenaria etc.), kN/m */
+/**
+ * Carga linear permanente sobre uma viga (alvenaria etc.), kN/m.
+ * `x0`/`x1` (m, medidos ao longo do eixo desde o 1º vértice) limitam a carga a
+ * um trecho; ausentes = viga inteira.
+ */
 export interface WallLoad {
   id: string
   beamId: string
   w: number
+  x0?: number
+  x1?: number
   label?: string
 }
 
+/** Geometria do lance p/ dimensionamento da escada (região kind 'escada') */
+export interface StairParams {
+  /** espessura da laje do lance (mísula/waist), m */
+  waist: number
+  /** espelho do degrau, m */
+  riser: number
+  /** piso (passo) do degrau, m */
+  tread: number
+  /** revestimento sobre a escada, kN/m² */
+  finish: number
+  /** vão do lance entre apoios, m (0/ausente = automático: maior lado do retângulo envolvente) */
+  span?: number
+  /** inverte o sentido de subida do lance (visualização 3D) */
+  reverse?: boolean
+  /** abre furo na laje deste pavimento sob a escada (default: true) */
+  opening?: boolean
+}
+
+/** Geometria p/ dimensionamento de reservatório retangular apoiado (kind 'reservatorio') */
+export interface TankParams {
+  /** lâmina d'água máxima, m */
+  waterHeight: number
+  /** espessura das paredes, m */
+  wallThickness: number
+  /** espessura da laje de fundo, m */
+  bottomThickness: number
+  /** espessura da tampa, m */
+  topThickness: number
+}
+
 /**
- * Região de carga adicional sobre lajes (escada, reservatório/caixa d'água,
- * equipamento, jardim…). A carga é distribuída às lajes sobrepostas
- * proporcionalmente à área de interseção.
+ * Região sobre lajes: carga adicional (escada, reservatório/caixa d'água,
+ * equipamento…) ou FURO/abertura (shaft, elevador — remove a laje na área).
+ * Cargas são distribuídas às lajes sobrepostas proporcionalmente à área de
+ * interseção; furos descontam peso próprio/revestimento/sobrecarga da laje.
+ * Escadas abrem furo na laje do próprio pavimento por padrão (stair.opening)
+ * e também são dimensionadas como elementos próprios (stair/tank).
  */
 export interface LoadRegion {
   id: string
   name: string
-  kind: 'escada' | 'reservatorio' | 'generica'
+  kind: 'escada' | 'reservatorio' | 'generica' | 'furo'
   polygon: Vec2[]
   /** permanente adicional, kN/m² */
   g: number
   /** variável adicional, kN/m² */
   q: number
   label?: string
+  /** parâmetros do lance (apenas kind 'escada'; ausente = defaults) */
+  stair?: StairParams
+  /** parâmetros do reservatório (apenas kind 'reservatorio'; ausente = defaults) */
+  tank?: TankParams
 }
 
 export interface FloorPlan {
@@ -213,12 +302,101 @@ export interface SoilParams {
   label: string
 }
 
+/** Tipos de solo p/ correlações com SPT (Teixeira & Godoy; Aoki–Velloso) */
+export type SoilKind =
+  | 'areia'
+  | 'areia-siltosa'
+  | 'areia-argilosa'
+  | 'silte-arenoso'
+  | 'silte'
+  | 'silte-argiloso'
+  | 'argila-arenosa'
+  | 'argila-siltosa'
+  | 'argila'
+
+/** Camada do perfil de sondagem (a partir da cota de apoio das fundações) */
+export interface SoilLayerSPT {
+  /** espessura da camada, m */
+  thickness: number
+  soil: SoilKind
+  /** NSPT médio da camada */
+  nspt: number
+  label?: string
+}
+
+/**
+ * Interação solo-estrutura: sondagem SPT → molas de apoio (CRV/CRH) nas bases
+ * dos pilares e estimativa de recalques. Métodos: recalque elástico com
+ * Es = α·K·NSPT (Teixeira & Godoy) p/ sapatas; Aoki–Velloso p/ estacas.
+ */
+export interface SoilInteractionParams {
+  enabled: boolean
+  /** camadas a partir da cota de apoio das fundações */
+  layers: SoilLayerSPT[]
+  /** profundidade do nível d'água abaixo da cota de apoio, m (null = não encontrado) */
+  waterDepth: number | null
+  /** CRH = chFactor·CRV quando não há ensaio específico (prática usual 0,5) */
+  chFactor: number
+  /** coeficiente de Poisson do solo (recalque elástico) */
+  poisson: number
+}
+
+/** Custos unitários p/ estimativa (R$) */
+export interface CostParams {
+  enabled: boolean
+  /** concreto lançado, R$/m³ */
+  concretePerM3: number
+  /** aço CA-50 cortado/dobrado/montado, R$/kg */
+  steelPerKg: number
+  /** fôrma (material + mão de obra), R$/m² */
+  formworkPerM2: number
+}
+
+/** Tempo requerido de resistência ao fogo, min (NBR 14432) */
+export type TRRF = 30 | 60 | 90 | 120 | 180
+
+/** Grupos de ocupação da NBR 14432 tab. A.1 (seleção usual) */
+export type OccupancyGroup = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H'
+
+export interface FireParams {
+  enabled: boolean
+  /** TRRF manual (min) ou 'auto' — sugerido pela NBR 14432 conforme grupo/altura */
+  trrf: TRRF | 'auto'
+  occupancy: OccupancyGroup
+}
+
+/** Tipo executivo da estaca (fatores F1/F2 de Aoki–Velloso) */
+export type PileKind = 'pre-moldada' | 'escavada' | 'helice' | 'franki' | 'raiz' | 'metalica'
+
+export interface FoundationParams {
+  type: 'sapata' | 'estacas'
+  /** carga admissível geotécnica por estaca, kN (orientativo — exige laudo) */
+  pileCapacity: number
+  /** diâmetro da estaca, m */
+  pileDiameter: number
+  /** espaçamento entre eixos = fator × diâmetro (≥2,5 pré-moldada, ≥3 moldada in loco) */
+  pileSpacingFactor: number
+  pileLabel: string
+  /** tipo executivo (Aoki–Velloso; usado na interação solo-estrutura) */
+  pileKind?: PileKind
+  /** comprimento da estaca, m (capacidade e mola vertical) */
+  pileLength?: number
+}
+
 export interface ProjectSettings {
   concrete: ConcreteMaterial
   steel: SteelMaterial
   caa: CAA
   wind: WindParams
   soil: SoilParams
+  /** interação solo-estrutura (molas de fundação + recalques) */
+  soilInteraction: SoilInteractionParams
+  /** custos unitários p/ estimativa nos quantitativos */
+  costs: CostParams
+  /** fundação: sapatas diretas ou blocos sobre estacas */
+  foundation: FoundationParams
+  /** verificação em situação de incêndio (NBR 14432 + NBR 15200) */
+  fire: FireParams
   /**
    * Não-linearidade física aproximada p/ análise global ELU — NBR 6118 §15.7.3:
    * vigas 0,4·EI, pilares 0,8·EI
@@ -233,6 +411,10 @@ export interface ProjectSettings {
   psiLive: { psi0: number; psi1: number; psi2: number }
   /** ψ0, ψ1, ψ2 do vento */
   psiWind: { psi0: number; psi1: number; psi2: number }
+  /** desaprumo global (NBR 6118 §11.3.3.4.1) combinado ao vento pela regra da norma */
+  notionalImperfections: boolean
+  /** majoração 0,95·γz dos esforços horizontais ELU quando 1,1 < γz ≤ 1,3 (§15.7.2) */
+  secondOrderGammaZ: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +427,10 @@ export interface Project {
   name: string
   author?: string
   city?: string
+  /** cliente/proprietário (carimbo das pranchas) */
+  client?: string
+  /** endereço da obra (carimbo das pranchas) */
+  address?: string
   createdAt: string
   grid: Grid
   /** ordenados por elevação crescente; levels[0] = fundação (planId null) */

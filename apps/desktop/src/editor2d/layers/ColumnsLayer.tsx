@@ -1,6 +1,5 @@
 import { memo } from 'react'
-import type { Column } from '@hyperframe/engine'
-import { sectionLabel } from '../format'
+import { columnFootprint, columnHalfExtents, columnSectionLabel, type Column } from '@hyperframe/engine'
 
 interface Props {
   columns: Column[]
@@ -10,51 +9,71 @@ interface Props {
   hoveredId: string | null
 }
 
-/** pilares: retângulo preenchido centrado em pos (rotationDeg 0 → h ao longo de X) */
+/** pilares: seção real (retângulo, círculo ou L) centrada no centróide */
 export default memo(function ColumnsLayer({ columns, k, showNames, selectedId, hoveredId }: Props) {
   const withLabel = showNames && k >= 12
   return (
     <g>
       {columns.map((c) => {
-        const w = (c.rotationDeg === 0 ? c.section.h : c.section.bw) * k
-        const h = (c.rotationDeg === 0 ? c.section.bw : c.section.h) * k
-        const x = c.pos.x * k - w / 2
-        const y = -c.pos.y * k - h / 2
         const sel = c.id === selectedId
         const hov = c.id === hoveredId && !sel
+        const fill = sel ? '#bfd4f2' : '#aab3c5'
+        const stroke = sel ? 'var(--sel)' : hov ? 'var(--blue)' : '#d7dce6'
+        const sw = sel ? 2.5 : 1.5
+        const { dx, dy } = columnHalfExtents(c)
+        const isCircle = c.section.shape === 'circle'
+        const pts = isCircle
+          ? ''
+          : columnFootprint(c)
+              .map((p) => `${p.x * k},${-p.y * k}`)
+              .join(' ')
         return (
           <g key={c.id}>
-            {hov && (
-              <rect
-                x={x - 3}
-                y={y - 3}
-                width={w + 6}
-                height={h + 6}
-                rx={2}
-                fill="none"
-                stroke="var(--blue)"
-                strokeWidth={5}
-                opacity={0.35}
+            {hov &&
+              (isCircle ? (
+                <circle
+                  cx={c.pos.x * k}
+                  cy={-c.pos.y * k}
+                  r={dx * k + 3}
+                  fill="none"
+                  stroke="var(--blue)"
+                  strokeWidth={5}
+                  opacity={0.35}
+                />
+              ) : (
+                <rect
+                  x={c.pos.x * k - dx * k - 3}
+                  y={-c.pos.y * k - dy * k - 3}
+                  width={dx * 2 * k + 6}
+                  height={dy * 2 * k + 6}
+                  rx={2}
+                  fill="none"
+                  stroke="var(--blue)"
+                  strokeWidth={5}
+                  opacity={0.35}
+                />
+              ))}
+            {isCircle ? (
+              <circle
+                cx={c.pos.x * k}
+                cy={-c.pos.y * k}
+                r={dx * k}
+                fill={fill}
+                stroke={stroke}
+                strokeWidth={sw}
               />
+            ) : (
+              <polygon points={pts} fill={fill} stroke={stroke} strokeWidth={sw} />
             )}
-            <rect
-              x={x}
-              y={y}
-              width={w}
-              height={h}
-              fill={sel ? '#bfd4f2' : '#aab3c5'}
-              stroke={sel ? 'var(--sel)' : hov ? 'var(--blue)' : '#d7dce6'}
-              strokeWidth={sel ? 2.5 : 1.5}
-            />
             {withLabel && (
               <text
                 x={c.pos.x * k}
-                y={y + h + 12}
+                y={-c.pos.y * k + dy * k + 12}
                 textAnchor="middle"
                 fontSize={10}
                 fill="var(--text-dim)"
               >
-                {c.name} {sectionLabel(c.section)}
+                {c.name} {columnSectionLabel(c.section)}
               </text>
             )}
           </g>

@@ -5,12 +5,15 @@ import type {
   CaseResult,
   FoundationResultItem,
 } from '../analysis/types'
-import { fyd as fydOf } from '../nbr/nbr6118/materials'
+import { concreteProps, fyd as fydOf } from '../nbr/nbr6118/materials'
 import { designFooting } from '../nbr/nbr6118/foundations'
+import { designPileCap } from '../nbr/nbr6118/pileCaps'
+import { columnSectionInfo } from '../model/columnSection'
 
 /**
- * Pré-dimensionamento de sapatas isoladas a partir das reações de serviço
- * (G + Q característicos, passe ELS).
+ * Pré-dimensionamento das fundações a partir das reações de serviço
+ * (G + Q característicos, passe ELS): sapatas isoladas OU blocos sobre
+ * estacas (método das bielas), conforme settings.foundation.type.
  */
 export function runFoundationDesign(
   project: Project,
@@ -21,6 +24,12 @@ export function runFoundationDesign(
   const q = casesEls.Q
   if (!g) return []
   const fydV = fydOf(project.settings.steel)
+  const usePiles = project.settings.foundation.type === 'estacas'
+  const cp = concreteProps(
+    project.settings.concrete.fck,
+    project.settings.concrete.aggregate,
+    project.settings.concrete.gammaC,
+  )
   const out: FoundationResultItem[] = []
 
   const reactionAt = (cr: CaseResult | undefined, nodeId: number) =>
@@ -43,12 +52,41 @@ export function runFoundationDesign(
     const mxServ = Math.abs(rg.mx + (rq?.mx ?? 0)) // em torno de X → excentricidade em Y
     const myServ = Math.abs(rg.my + (rq?.my ?? 0)) // em torno de Y → excentricidade em X
 
-    // direção a = dimensão h do pilar (rot 0 → h ao longo de X)
-    const alongX = col.rotationDeg === 0
-    const ap = col.section.h
-    const bp = col.section.bw
+    // direção a = dimensão h do pilar (rot 0/180 → h ao longo de X)
+    const info = columnSectionInfo(col.section)
+    const alongX = col.rotationDeg === 0 || col.rotationDeg === 180
+    const ap = info.bv
+    const bp = info.bu
     const ma = alongX ? myServ : mxServ
     const mb = alongX ? mxServ : myServ
+
+    if (usePiles) {
+      const pileCap = designPileCap({
+        nServ,
+        ap,
+        bp,
+        pileCapacity: project.settings.foundation.pileCapacity,
+        pileDiameter: project.settings.foundation.pileDiameter,
+        spacingFactor: project.settings.foundation.pileSpacingFactor,
+        fcd: cp.fcd,
+        fyd: fydV,
+      })
+      if (ma + mb > 0.05 * nServ * Math.max(ap, bp)) {
+        pileCap.notes.push(
+          'Momentos na base não considerados na divisão de carga entre estacas — verificar.',
+        )
+      }
+      out.push({
+        columnId: col.id,
+        name: col.name,
+        nServ,
+        kind: 'bloco',
+        footing: null,
+        pileCap,
+        status: pileCap.status,
+      })
+      continue
+    }
 
     const footing = designFooting({
       nServ,
@@ -64,7 +102,9 @@ export function runFoundationDesign(
       columnId: col.id,
       name: col.name,
       nServ,
+      kind: 'sapata',
       footing,
+      pileCap: null,
       status: footing.status,
     })
   }

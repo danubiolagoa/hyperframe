@@ -9,7 +9,10 @@ interface Props {
   hoveredId: string | null
 }
 
-/** regiões de carga (escada/reservatório…): polígono tracejado + rótulo "nome / g,q" no centroide */
+/**
+ * Regiões: cargas (escada/reservatório…) em laranja tracejado com "nome / g,q";
+ * furos/aberturas em cinza com X de vazio (convenção de planta de forma).
+ */
 export default memo(function RegionsLayer({ regions, k, selectedId, hoveredId }: Props) {
   return (
     <g>
@@ -20,6 +23,32 @@ export default memo(function RegionsLayer({ regions, k, selectedId, hoveredId }:
         const cy = -cen.y * k
         const sel = rg.id === selectedId
         const hov = rg.id === hoveredId && !sel
+        const isFuro = rg.kind === 'furo'
+        const stairOpening = rg.kind === 'escada' && (rg.stair?.opening ?? true)
+        const baseStroke = isFuro ? 'var(--text-dim)' : 'var(--accent)'
+
+        // X de vazio pelo retângulo envolvente (furo e escada com abertura)
+        let cross = null
+        if ((isFuro || stairOpening) && rg.polygon.length >= 3) {
+          let minX = Infinity
+          let minY = Infinity
+          let maxX = -Infinity
+          let maxY = -Infinity
+          for (const p of rg.polygon) {
+            minX = Math.min(minX, p.x)
+            minY = Math.min(minY, p.y)
+            maxX = Math.max(maxX, p.x)
+            maxY = Math.max(maxY, p.y)
+          }
+          const stroke = isFuro ? baseStroke : 'rgba(255,160,40,0.5)'
+          cross = (
+            <>
+              <line x1={minX * k} y1={-minY * k} x2={maxX * k} y2={-maxY * k} stroke={stroke} strokeWidth={1} />
+              <line x1={minX * k} y1={-maxY * k} x2={maxX * k} y2={-minY * k} stroke={stroke} strokeWidth={1} />
+            </>
+          )
+        }
+
         return (
           <g key={rg.id}>
             {hov && (
@@ -27,18 +56,19 @@ export default memo(function RegionsLayer({ regions, k, selectedId, hoveredId }:
             )}
             <polygon
               points={pts}
-              fill="rgba(255,160,40,0.08)"
-              stroke={sel ? 'var(--sel)' : hov ? 'var(--blue)' : 'var(--accent)'}
+              fill={isFuro ? 'rgba(120,128,144,0.13)' : 'rgba(255,160,40,0.08)'}
+              stroke={sel ? 'var(--sel)' : hov ? 'var(--blue)' : baseStroke}
               strokeWidth={sel ? 2.5 : 1.5}
               strokeDasharray="4 2"
             />
+            {cross}
             {k >= 9 && (
-              <text x={cx} y={cy} textAnchor="middle" fontSize={11} fill="var(--accent)">
+              <text x={cx} y={cy} textAnchor="middle" fontSize={11} fill={baseStroke}>
                 <tspan x={cx} dy="-0.15em">
                   {rg.name}
                 </tspan>
                 <tspan x={cx} dy="1.35em" fontSize={9}>
-                  g={fmt(rg.g, 1)} q={fmt(rg.q, 1)} kN/m²
+                  {isFuro ? 'furo / abertura' : `g=${fmt(rg.g, 1)} q=${fmt(rg.q, 1)} kN/m²`}
                 </tspan>
               </text>
             )}

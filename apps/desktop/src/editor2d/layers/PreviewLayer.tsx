@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { dist, type SectionRect, type Vec2 } from '@hyperframe/engine'
+import { columnFootprint, type ColumnSection, dist, type Vec2 } from '@hyperframe/engine'
 import type { Tool } from '../../store'
 import type { SnapKind } from '../snap'
 import { fmt } from '../format'
@@ -14,8 +14,8 @@ interface Props {
   k: number
   cursor: CursorSnap | null
   chain: Vec2[]
-  columnSection: SectionRect
-  columnRotation: 0 | 90
+  columnSection: ColumnSection
+  columnRotation: 0 | 90 | 180 | 270
 }
 
 /** pré-visualizações das ferramentas: fantasma do pilar, polilinha da viga/região, marcador de snap */
@@ -31,15 +31,15 @@ export default function PreviewLayer({
   const parts: ReactElement[] = []
 
   if (tool === 'column' && cursor) {
-    const w = (columnRotation === 0 ? columnSection.h : columnSection.bw) * k
-    const h = (columnRotation === 0 ? columnSection.bw : columnSection.h) * k
+    const fp = columnFootprint({
+      section: columnSection,
+      rotationDeg: columnRotation,
+      pos: cursor.point,
+    })
     parts.push(
-      <rect
+      <polygon
         key="ghost"
-        x={cursor.point.x * k - w / 2}
-        y={-cursor.point.y * k - h / 2}
-        width={w}
-        height={h}
+        points={fp.map((p) => `${p.x * k},${-p.y * k}`).join(' ')}
         fill="rgba(170,179,197,0.30)"
         stroke="var(--accent)"
         strokeWidth={1}

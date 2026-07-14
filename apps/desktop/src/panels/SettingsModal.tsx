@@ -3,16 +3,22 @@ import {
   CITY_V0_PRESETS,
   CONCRETE_CLASSES,
   COVER_BY_CAA,
+  OCCUPANCY_OPTIONS,
+  PILE_PRESETS,
   PSI_PRESETS,
   SOIL_PRESETS,
+  requiredTRRF,
   type Aggregate,
   type CAA,
+  type OccupancyGroup,
+  type TRRF,
   type WindParams,
 } from '@hyperframe/engine'
 import { useStore } from '../store'
 import { NumberField, OptionalNumberField } from './NumberField'
 import { cm, fmt } from './format'
-import { IconClose } from '../components/Icons'
+import { IconClose, IconTrash } from '../components/Icons'
+import type { PileKind, SoilKind, SoilLayerSPT } from '@hyperframe/engine'
 
 // ---------------------------------------------------------------------------
 // opções normativas (rótulos pt-BR)
@@ -57,6 +63,27 @@ const S3_GROUP_OPTIONS: { value: 1 | 2 | 3 | 4 | 5; label: string }[] = [
 const PSI_KEYS = ['residencial', 'comercial', 'deposito'] as const
 type PsiKey = (typeof PSI_KEYS)[number]
 
+const SOIL_KIND_OPTIONS: { value: SoilKind; label: string }[] = [
+  { value: 'areia', label: 'Areia' },
+  { value: 'areia-siltosa', label: 'Areia siltosa' },
+  { value: 'areia-argilosa', label: 'Areia argilosa' },
+  { value: 'silte-arenoso', label: 'Silte arenoso' },
+  { value: 'silte', label: 'Silte' },
+  { value: 'silte-argiloso', label: 'Silte argiloso' },
+  { value: 'argila-arenosa', label: 'Argila arenosa' },
+  { value: 'argila-siltosa', label: 'Argila siltosa' },
+  { value: 'argila', label: 'Argila' },
+]
+
+const PILE_KIND_OPTIONS: { value: PileKind; label: string }[] = [
+  { value: 'helice', label: 'Hélice contínua (F1=2; F2=4)' },
+  { value: 'escavada', label: 'Escavada (F1=3; F2=6)' },
+  { value: 'pre-moldada', label: 'Pré-moldada (F1=1,75; F2=3,5)' },
+  { value: 'franki', label: 'Franki (F1=2,5; F2=5)' },
+  { value: 'raiz', label: 'Raiz (F1=2; F2=4)' },
+  { value: 'metalica', label: 'Metálica (F1=1,75; F2=3,5)' },
+]
+
 // ---------------------------------------------------------------------------
 
 function Section({ title, first, children }: { title: string; first?: boolean; children: ReactNode }) {
@@ -79,6 +106,7 @@ function Note({ children }: { children: ReactNode }) {
 export default function SettingsModal() {
   const project = useStore((s) => s.project)
   const updateSettings = useStore((s) => s.updateSettings)
+  const setProjectMeta = useStore((s) => s.setProjectMeta)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
 
   const st = project.settings
@@ -102,6 +130,9 @@ export default function SettingsModal() {
   const soilMatch = SOIL_PRESETS.find(
     (p) => p.label === st.soil.label && Math.abs(p.sigmaAdm - st.soil.sigmaAdm) < 1e-9,
   )
+
+  const buildingHeight = project.levels.reduce((s, l) => Math.max(s, l.elevation), 0)
+  const trrfAuto = requiredTRRF(st.fire.occupancy, buildingHeight)
 
   return (
     <div className="modal-overlay">
@@ -361,46 +392,463 @@ export default function SettingsModal() {
 
           {/* ------------------------------------------------ fundações */}
           <Section title="Fundações (NBR 6122)">
-            <div className="field-row">
-              <div className="field">
-                <label className="label">Tipo de solo</label>
+            <div className="field">
+              <label className="label">Tipo de fundação</label>
+              <select
+                className="select"
+                style={{ width: '100%' }}
+                value={st.foundation.type}
+                onChange={(e) =>
+                  updateSettings({
+                    foundation: { ...st.foundation, type: e.target.value as 'sapata' | 'estacas' },
+                  })
+                }
+              >
+                <option value="sapata">Sapatas rígidas isoladas (fundação direta)</option>
+                <option value="estacas">Blocos sobre estacas (método das bielas — Blévot)</option>
+              </select>
+            </div>
+
+            {st.foundation.type === 'sapata' ? (
+              <div className="field-row">
+                <div className="field">
+                  <label className="label">Tipo de solo</label>
+                  <select
+                    className="select"
+                    style={{ width: '100%' }}
+                    value={soilMatch ? soilMatch.label : 'custom'}
+                    onChange={(e) => {
+                      const p = SOIL_PRESETS.find((x) => x.label === e.target.value)
+                      if (p) updateSettings({ soil: { sigmaAdm: p.sigmaAdm, label: p.label } })
+                    }}
+                  >
+                    {!soilMatch && (
+                      <option value="custom" disabled>
+                        {st.soil.label || 'Personalizado'} — {fmt(st.soil.sigmaAdm, 0)} kPa
+                      </option>
+                    )}
+                    {SOIL_PRESETS.map((p) => (
+                      <option key={p.label} value={p.label}>
+                        {p.label} — {fmt(p.sigmaAdm, 0)} kPa
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label className="label">σadm (kPa)</label>
+                  <NumberField
+                    value={st.soil.sigmaAdm}
+                    digits={0}
+                    min={10}
+                    max={5000}
+                    style={{ width: '100%' }}
+                    onCommit={(v) =>
+                      updateSettings({ soil: { sigmaAdm: v, label: 'Personalizado' } })
+                    }
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="field">
+                  <label className="label">Tipo de estaca (aplica φ e carga usuais)</label>
+                  <select
+                    className="select"
+                    style={{ width: '100%' }}
+                    value=""
+                    onChange={(e) => {
+                      const p = PILE_PRESETS.find((x) => x.label === e.target.value)
+                      if (p) {
+                        updateSettings({
+                          foundation: {
+                            ...st.foundation,
+                            pileLabel: p.label,
+                            pileDiameter: p.diameter,
+                            pileCapacity: p.capacity,
+                          },
+                        })
+                      }
+                    }}
+                  >
+                    <option value="" disabled>
+                      {st.foundation.pileLabel} — φ {fmt(cm(st.foundation.pileDiameter), 0)} cm ·{' '}
+                      {fmt(st.foundation.pileCapacity, 0)} kN
+                    </option>
+                    {PILE_PRESETS.map((p) => (
+                      <option key={p.label} value={p.label}>
+                        {p.label} — φ {fmt(cm(p.diameter), 0)} cm · {fmt(p.capacity, 0)} kN
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field-row">
+                  <div className="field">
+                    <label className="label">Carga admissível (kN/estaca)</label>
+                    <NumberField
+                      value={st.foundation.pileCapacity}
+                      digits={0}
+                      min={20}
+                      max={5000}
+                      style={{ width: '100%' }}
+                      onCommit={(v) =>
+                        updateSettings({ foundation: { ...st.foundation, pileCapacity: v } })
+                      }
+                    />
+                  </div>
+                  <div className="field">
+                    <label className="label">Diâmetro φ (cm)</label>
+                    <NumberField
+                      value={cm(st.foundation.pileDiameter)}
+                      digits={0}
+                      min={15}
+                      max={120}
+                      style={{ width: '100%' }}
+                      onCommit={(v) =>
+                        updateSettings({ foundation: { ...st.foundation, pileDiameter: v / 100 } })
+                      }
+                    />
+                  </div>
+                  <div className="field">
+                    <label className="label">Espaçamento (×φ)</label>
+                    <NumberField
+                      value={st.foundation.pileSpacingFactor}
+                      digits={1}
+                      min={2.5}
+                      max={5}
+                      style={{ width: '100%' }}
+                      onCommit={(v) =>
+                        updateSettings({
+                          foundation: { ...st.foundation, pileSpacingFactor: v },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="field-row">
+                  <div className="field">
+                    <label className="label">Execução (Aoki–Velloso)</label>
+                    <select
+                      className="select"
+                      style={{ width: '100%' }}
+                      value={st.foundation.pileKind ?? 'helice'}
+                      onChange={(e) =>
+                        updateSettings({
+                          foundation: { ...st.foundation, pileKind: e.target.value as PileKind },
+                        })
+                      }
+                    >
+                      {PILE_KIND_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label className="label">Comprimento (m)</label>
+                    <NumberField
+                      value={st.foundation.pileLength ?? 10}
+                      digits={1}
+                      min={3}
+                      max={60}
+                      style={{ width: '100%' }}
+                      onCommit={(v) =>
+                        updateSettings({ foundation: { ...st.foundation, pileLength: v } })
+                      }
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            <Note>
+              Valores geotécnicos orientativos — o projeto executivo exige sondagem SPT e laudo
+              geotécnico (NBR 6122).
+            </Note>
+          </Section>
+
+          {/* --------------------------------- interação solo-estrutura */}
+          <Section title="Interação solo-estrutura (sondagem SPT → molas)">
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12.5,
+                marginBottom: 8,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={st.soilInteraction.enabled}
+                onChange={(e) =>
+                  updateSettings({
+                    soilInteraction: { ...st.soilInteraction, enabled: e.target.checked },
+                  })
+                }
+              />
+              Analisar sobre apoios elásticos (CRV/CRH estimados da sondagem) e estimar recalques
+            </label>
+
+            <label className="label">Perfil de sondagem (a partir da cota de apoio)</label>
+            {st.soilInteraction.layers.map((layer, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+                <NumberField
+                  value={layer.thickness}
+                  digits={1}
+                  min={0.5}
+                  max={40}
+                  style={{ width: 58 }}
+                  onCommit={(v) => {
+                    const layers = st.soilInteraction.layers.map((l, j) =>
+                      j === i ? { ...l, thickness: v } : l,
+                    )
+                    updateSettings({ soilInteraction: { ...st.soilInteraction, layers } })
+                  }}
+                />
+                <span className="muted" style={{ fontSize: 11 }}>
+                  m
+                </span>
                 <select
                   className="select"
-                  style={{ width: '100%' }}
-                  value={soilMatch ? soilMatch.label : 'custom'}
+                  style={{ flex: 1 }}
+                  value={layer.soil}
                   onChange={(e) => {
-                    const p = SOIL_PRESETS.find((x) => x.label === e.target.value)
-                    if (p) updateSettings({ soil: { sigmaAdm: p.sigmaAdm, label: p.label } })
+                    const layers = st.soilInteraction.layers.map((l, j) =>
+                      j === i ? { ...l, soil: e.target.value as SoilKind, label: undefined } : l,
+                    )
+                    updateSettings({ soilInteraction: { ...st.soilInteraction, layers } })
                   }}
                 >
-                  {!soilMatch && (
-                    <option value="custom" disabled>
-                      {st.soil.label || 'Personalizado'} — {fmt(st.soil.sigmaAdm, 0)} kPa
-                    </option>
-                  )}
-                  {SOIL_PRESETS.map((p) => (
-                    <option key={p.label} value={p.label}>
-                      {p.label} — {fmt(p.sigmaAdm, 0)} kPa
+                  {SOIL_KIND_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
                     </option>
                   ))}
                 </select>
+                <span className="muted" style={{ fontSize: 11 }}>
+                  NSPT
+                </span>
+                <NumberField
+                  value={layer.nspt}
+                  digits={0}
+                  min={1}
+                  max={60}
+                  style={{ width: 48 }}
+                  onCommit={(v) => {
+                    const layers = st.soilInteraction.layers.map((l, j) =>
+                      j === i ? { ...l, nspt: v } : l,
+                    )
+                    updateSettings({ soilInteraction: { ...st.soilInteraction, layers } })
+                  }}
+                />
+                <button
+                  className="btn"
+                  title="Remover camada"
+                  style={{ padding: '2px 7px', color: 'var(--err)' }}
+                  disabled={st.soilInteraction.layers.length <= 1}
+                  onClick={() =>
+                    updateSettings({
+                      soilInteraction: {
+                        ...st.soilInteraction,
+                        layers: st.soilInteraction.layers.filter((_, j) => j !== i),
+                      },
+                    })
+                  }
+                >
+                  <IconTrash size={12} />
+                </button>
+              </div>
+            ))}
+            <button
+              className="btn"
+              style={{ fontSize: 12, marginBottom: 10 }}
+              onClick={() => {
+                const last = st.soilInteraction.layers[st.soilInteraction.layers.length - 1]
+                const nova: SoilLayerSPT = last
+                  ? { ...last, thickness: 3 }
+                  : { thickness: 3, soil: 'areia', nspt: 15 }
+                updateSettings({
+                  soilInteraction: {
+                    ...st.soilInteraction,
+                    layers: [...st.soilInteraction.layers, nova],
+                  },
+                })
+              }}
+            >
+              + Camada
+            </button>
+
+            <div className="field-row">
+              <div className="field">
+                <label className="label">CRH / CRV</label>
+                <NumberField
+                  value={st.soilInteraction.chFactor}
+                  digits={2}
+                  min={0.1}
+                  max={1}
+                  style={{ width: '100%' }}
+                  onCommit={(v) =>
+                    updateSettings({ soilInteraction: { ...st.soilInteraction, chFactor: v } })
+                  }
+                />
               </div>
               <div className="field">
-                <label className="label">σadm (kPa)</label>
+                <label className="label">ν do solo</label>
                 <NumberField
-                  value={st.soil.sigmaAdm}
-                  digits={0}
-                  min={10}
-                  max={5000}
+                  value={st.soilInteraction.poisson}
+                  digits={2}
+                  min={0.15}
+                  max={0.49}
                   style={{ width: '100%' }}
-                  onCommit={(v) => updateSettings({ soil: { sigmaAdm: v, label: 'Personalizado' } })}
+                  onCommit={(v) =>
+                    updateSettings({ soilInteraction: { ...st.soilInteraction, poisson: v } })
+                  }
                 />
               </div>
             </div>
             <Note>
-              Tensões admissíveis orientativas — o projeto executivo exige sondagem SPT e laudo
-              geotécnico (NBR 6122).
+              Es = α·K·NSPT (Teixeira &amp; Godoy) p/ sapatas; capacidade e mola de estacas por
+              Aoki–Velloso. As fundações do 1º passe (engastado) geram as molas; o pórtico é
+              re-analisado sobre elas. Sondagem fictícia NÃO substitui o laudo (NBR 6122).
             </Note>
+          </Section>
+
+          {/* ------------------------------------------------ custos */}
+          <Section title="Custos unitários (estimativa)">
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12.5,
+                marginBottom: 8,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={st.costs.enabled}
+                onChange={(e) =>
+                  updateSettings({ costs: { ...st.costs, enabled: e.target.checked } })
+                }
+              />
+              Estimar custo da estrutura nos quantitativos e no memorial
+            </label>
+            <div className="field-row">
+              <div className="field">
+                <label className="label">Concreto (R$/m³)</label>
+                <NumberField
+                  value={st.costs.concretePerM3}
+                  digits={0}
+                  min={100}
+                  max={5000}
+                  style={{ width: '100%' }}
+                  onCommit={(v) => updateSettings({ costs: { ...st.costs, concretePerM3: v } })}
+                />
+              </div>
+              <div className="field">
+                <label className="label">Aço (R$/kg)</label>
+                <NumberField
+                  value={st.costs.steelPerKg}
+                  digits={2}
+                  min={1}
+                  max={100}
+                  style={{ width: '100%' }}
+                  onCommit={(v) => updateSettings({ costs: { ...st.costs, steelPerKg: v } })}
+                />
+              </div>
+              <div className="field">
+                <label className="label">Fôrma (R$/m²)</label>
+                <NumberField
+                  value={st.costs.formworkPerM2}
+                  digits={0}
+                  min={10}
+                  max={1000}
+                  style={{ width: '100%' }}
+                  onCommit={(v) => updateSettings({ costs: { ...st.costs, formworkPerM2: v } })}
+                />
+              </div>
+            </div>
+            <Note>Concreto lançado, aço cortado/dobrado/montado e fôrma com mão de obra.</Note>
+          </Section>
+
+          {/* ------------------------------------------------ incêndio */}
+          <Section title="Incêndio (NBR 14432 / NBR 15200)">
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12.5,
+                marginBottom: 10,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={st.fire.enabled}
+                onChange={(e) =>
+                  updateSettings({ fire: { ...st.fire, enabled: e.target.checked } })
+                }
+              />
+              Verificar estrutura em situação de incêndio (método tabular/analítico)
+            </label>
+            <div style={{ opacity: st.fire.enabled ? 1 : 0.5 }}>
+              <div className="field-row">
+                <div className="field">
+                  <label className="label">Ocupação (NBR 14432 tab. A.1)</label>
+                  <select
+                    className="select"
+                    style={{ width: '100%' }}
+                    disabled={!st.fire.enabled}
+                    value={st.fire.occupancy}
+                    onChange={(e) =>
+                      updateSettings({
+                        fire: { ...st.fire, occupancy: e.target.value as OccupancyGroup },
+                      })
+                    }
+                  >
+                    {OCCUPANCY_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label className="label">TRRF</label>
+                  <select
+                    className="select"
+                    style={{ width: '100%' }}
+                    disabled={!st.fire.enabled}
+                    value={String(st.fire.trrf)}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateSettings({
+                        fire: {
+                          ...st.fire,
+                          trrf: v === 'auto' ? 'auto' : (Number(v) as TRRF),
+                        },
+                      })
+                    }}
+                  >
+                    <option value="auto">
+                      Automático (grupo + altura) — hoje: {trrfAuto} min
+                    </option>
+                    {[30, 60, 90, 120, 180].map((t) => (
+                      <option key={t} value={String(t)}>
+                        {t} min
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <Note>
+                TRRF sugerido pela tab. A.1 — confirme divisão de ocupação, isenções e exigências
+                da IT do Corpo de Bombeiros local.
+              </Note>
+            </div>
           </Section>
 
           {/* ------------------------------------------------ análise */}
@@ -438,6 +886,42 @@ export default function SettingsModal() {
               </div>
             </div>
             <Note>NBR 6118 §15.7.3 — análise global ELU (padrão: vigas 0,4 · pilares 0,8).</Note>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12.5,
+                marginBottom: 8,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={st.notionalImperfections}
+                onChange={(e) => updateSettings({ notionalImperfections: e.target.checked })}
+              />
+              Desaprumo global (§11.3.3.4.1) combinado ao vento pela regra da norma
+            </label>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12.5,
+                marginBottom: 10,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={st.secondOrderGammaZ}
+                onChange={(e) => updateSettings({ secondOrderGammaZ: e.target.checked })}
+              />
+              2ª ordem global aproximada: majorar vento ELU por 0,95·γz quando 1,1 &lt; γz ≤ 1,3
+              (§15.7.2)
+            </label>
 
             <div className="field-row">
               <div className="field">
@@ -494,6 +978,43 @@ export default function SettingsModal() {
                 })}
               </select>
             </div>
+          </Section>
+
+          {/* --------------------------------- identificação (carimbo) */}
+          <Section title="Identificação da obra (carimbo das pranchas)">
+            <div className="field-row">
+              <div className="field">
+                <label className="label">Cliente / proprietário</label>
+                <input
+                  className="input"
+                  style={{ width: '100%' }}
+                  value={project.client ?? ''}
+                  spellCheck={false}
+                  onChange={(e) => setProjectMeta({ client: e.target.value || undefined })}
+                />
+              </div>
+              <div className="field">
+                <label className="label">Resp. técnico</label>
+                <input
+                  className="input"
+                  style={{ width: '100%' }}
+                  value={project.author ?? ''}
+                  spellCheck={false}
+                  onChange={(e) => setProjectMeta({ author: e.target.value || undefined })}
+                />
+              </div>
+            </div>
+            <div className="field">
+              <label className="label">Endereço da obra</label>
+              <input
+                className="input"
+                style={{ width: '100%' }}
+                value={project.address ?? ''}
+                spellCheck={false}
+                onChange={(e) => setProjectMeta({ address: e.target.value || undefined })}
+              />
+            </div>
+            <Note>Preenche o carimbo ao exportar pranchas com moldura (aba Pranchas).</Note>
           </Section>
         </div>
 

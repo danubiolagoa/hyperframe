@@ -1,9 +1,15 @@
 import type { Project } from './model/types'
-import { buildAnalysisModel } from './analysis/buildModel'
+import { buildAnalysisModel, slabOpeningsArea } from './analysis/buildModel'
 import { numberDofs, solvePass } from './analysis/solve'
 import { generateCombos } from './nbr/nbr8681/combinations'
 import { concreteProps, coverFor, fyd as fydOf } from './nbr/nbr6118/materials'
-import { designBeamFlexure, designBeamShear, pickBars } from './nbr/nbr6118/beamDesign'
+import {
+  designBeamFlexure,
+  designBeamShear,
+  designBeamTorsion,
+  pickBars,
+  skinReinforcement,
+} from './nbr/nbr6118/beamDesign'
 import { gammaZ, alphaParam } from './nbr/nbr6118/stability'
 import { DRIFT_STORY_RATIO, DRIFT_TOP_RATIO } from './nbr/api'
 import { runColumnDesign } from './design/columnRun'
@@ -11,6 +17,12 @@ import { runSlabDesign } from './design/slabRun'
 import { runFoundationDesign } from './design/foundationRun'
 import { runBeamService } from './design/serviceRun'
 import { runDetailing } from './design/detailing'
+import { runStairDesign } from './design/stairRun'
+import { runTankDesign } from './design/tankRun'
+import { runFireCheck } from './design/fireRun'
+import { runOpeningChecks } from './design/openingsRun'
+import { footingSprings, pileCapSprings } from './geotech/soil'
+import { columnSectionInfo } from './model/columnSection'
 import type {
   AnalysisResults,
   BeamSpanDesign,
@@ -19,12 +31,15 @@ import type {
   DetailingResults,
   DriftResult,
   FlexureDesign,
+  FoundationLoadRow,
+  FoundationResultItem,
   GammaZResult,
   LoadCombo,
   MemberDiagrams,
   Quantities,
   Reaction,
   SlabDesignResultItem,
+  SoilInteractionResults,
 } from './analysis/types'
 import { ALL_CASES } from './analysis/types'
 
@@ -51,31 +66,47 @@ export function analyze(project: Project): AnalysisResults {
     psiWind: project.settings.psiWind,
   })
 
-  const system = numberDofs(model)
+  let system = numberDofs(model)
   model.stats.dofs = system.nDofs
 
   const activeCases: CaseId[] = hasWind ? ALL_CASES : ['G', 'Q']
-  const casesElu = solvePass(
-    project,
-    model,
-    internal,
-    system,
-    {
-      beams: project.settings.stiffnessReduction.beams,
-      columns: project.settings.stiffnessReduction.columns,
-      useEci: true,
-    },
-    activeCases,
-  )
-  const casesEls = solvePass(
-    project,
-    model,
-    internal,
-    system,
-    { beams: 1, columns: 1, useEci: false },
-    activeCases,
-  )
+  const eluPass = {
+    beams: project.settings.stiffnessReduction.beams,
+    columns: project.settings.stiffnessReduction.columns,
+    useEci: true,
+  }
+  const elsPass = { beams: 1, columns: 1, useEci: false }
+  let casesElu = solvePass(project, model, internal, system, eluPass, activeCases)
+  let casesEls = solvePass(project, model, internal, system, elsPass, activeCases)
+
+  // -------------------------------------------- interação solo-estrutura
+  // 1º passe engastado dimensiona as fundações; delas nascem as molas
+  // (CRV/CRH); o modelo é então re-analisado sobre apoios elásticos e as
+  // fundações reavaliadas com as novas reações.
+  let foundations = runFoundationDesign(project, model, casesEls)
+  const soilInteraction = initSoilResults(project)
+  if (project.settings.soilInteraction.enabled) {
+    const assigned = assignFoundationSprings(project, model, foundations, soilInteraction)
+    if (assigned > 0) {
+      system = numberDofs(model)
+      model.stats.dofs = system.nDofs
+      casesElu = solvePass(project, model, internal, system, eluPass, activeCases)
+      casesEls = solvePass(project, model, internal, system, elsPass, activeCases)
+      foundations = runFoundationDesign(project, model, casesEls)
+      model.warnings.push(
+        `Interação solo-estrutura: ${assigned} apoio(s) sobre molas (CRV/CRH estimados da sondagem) — molas calculadas com as fundações do 1º passe engastado.`,
+      )
+    } else {
+      soilInteraction.notes.push('Nenhum apoio recebeu molas (fundações sem resultados).')
+    }
+  }
   const cases = { elu: casesElu, els: casesEls }
+
+  // ---------------------------------------------------------- estabilidade
+  // (antes da envoltória: a majoração 0,95·γz de 2ª ordem altera os fatores
+  //  de vento das combinações ELU — NBR 6118 §15.7.2)
+  const stability = computeStability(project, model, combos, cases)
+  stability.secondOrder = applySecondOrderAmplification(project, model, combos, stability)
 
   // ---------------------------------------------------------- envoltória ELU
   const eluCombos = combos.filter((c) => c.type === 'ELU')
@@ -113,16 +144,35 @@ export function analyze(project: Project): AnalysisResults {
     for (const f of fields) envelopeELU[f].push(env[f])
   }
 
-  // ---------------------------------------------------------- estabilidade
-  const stability = computeStability(project, model, combos, cases)
-
   // ------------------------------------------------------- dimensionamento
   const beamDesign = designBeams(project, model, envelopeELU)
   const columnDesign = runColumnDesign(project, model, combos, casesElu)
   const slabDesign = runSlabDesign(project)
-  const foundations = runFoundationDesign(project, model, casesEls)
   const beamService = runBeamService(project, model, combos, casesEls, beamDesign)
+  const stairDesign = runStairDesign(project)
+  const tankDesign = runTankDesign(project)
+  const fire = runFireCheck(project, beamDesign, columnDesign, slabDesign)
   const detailing = runDetailing(project, beamDesign, columnDesign)
+
+  // ------------------------------------------------- furos de viga (§13.2.5)
+  const beamOpenings = runOpeningChecks(project)
+  for (const op of beamOpenings) {
+    if (op.status === 'inadequada') {
+      model.warnings.push(
+        `Furo na viga ${op.beamName} (${op.planName}, x=${op.x.toFixed(2)} m): geometria INADEQUADA (§13.2.5.1).`,
+      )
+    } else if (op.status === 'verificar') {
+      model.warnings.push(
+        `Furo na viga ${op.beamName} (${op.planName}, x=${op.x.toFixed(2)} m): fora das condições de dispensa (§13.2.5.2) — verificação específica da região necessária.`,
+      )
+    }
+  }
+
+  // ----------------------------------------- recalques (ELS-QP, molas ativas)
+  finishSoilResults(project, model, combos, casesEls, soilInteraction)
+
+  // --------------------------------------------- planta de cargas (fundação)
+  const foundationLoads = computeFoundationLoads(project, model, combos, cases)
 
   // ----------------------------------------------------------- quantitativos
   const quantities = computeQuantities(project, model, detailing, slabDesign)
@@ -139,11 +189,194 @@ export function analyze(project: Project): AnalysisResults {
     slabDesign,
     foundations,
     beamService,
+    stairDesign,
+    tankDesign,
+    fire,
     detailing,
     quantities,
+    beamOpenings,
+    soilInteraction,
+    foundationLoads,
     warnings: model.warnings,
     elapsedMs,
   }
+}
+
+// ---------------------------------------------------------------------------
+// interação solo-estrutura — molas por fundação e recalques
+// ---------------------------------------------------------------------------
+
+function initSoilResults(project: Project): SoilInteractionResults {
+  const enabled = project.settings.soilInteraction.enabled
+  return {
+    enabled,
+    items: [],
+    maxSettlement: 0,
+    maxDistortion: null,
+    notes: enabled
+      ? [
+          'CRV/CRH estimados da sondagem (Es = α·K·NSPT — Teixeira & Godoy; estacas por Aoki–Velloso). Projeto executivo exige laudo geotécnico (NBR 6122).',
+        ]
+      : [],
+  }
+}
+
+/** nó de apoio (base) do pilar */
+function baseNodeOf(model: AnalysisResults['model'], col: Project['columns'][number]) {
+  return model.nodes.find(
+    (n) => n.support && Math.abs(n.x - col.pos.x) < 0.05 && Math.abs(n.y - col.pos.y) < 0.05,
+  )
+}
+
+/** calcula e instala as molas nos nós de apoio; retorna quantos receberam */
+function assignFoundationSprings(
+  project: Project,
+  model: AnalysisResults['model'],
+  foundations: FoundationResultItem[],
+  soil: SoilInteractionResults,
+): number {
+  const params = project.settings.soilInteraction
+  let assigned = 0
+  for (const f of foundations) {
+    const col = project.columns.find((c) => c.id === f.columnId)
+    if (!col) continue
+    const node = baseNodeOf(model, col)
+    if (!node) continue
+    // direção "a" da fundação = direção h do pilar (rot 0/180 → ao longo de X)
+    const aAlongX = col.rotationDeg === 0 || col.rotationDeg === 180
+    const springs =
+      f.kind === 'sapata' && f.footing
+        ? footingSprings(f.footing.a, f.footing.b, params, aAlongX)
+        : f.pileCap
+          ? pileCapSprings(
+              f.pileCap.nPiles,
+              f.pileCap.e,
+              project.settings.foundation,
+              params,
+              aAlongX,
+            )
+          : null
+    if (!springs) continue
+    node.springs = [springs.kh, springs.kh, springs.kv, springs.krx, springs.kry, springs.krz]
+    assigned++
+    soil.items.push({
+      columnId: col.id,
+      name: col.name,
+      kind: f.kind,
+      kv: springs.kv,
+      kh: springs.kh,
+      krx: springs.krx,
+      kry: springs.kry,
+      krz: springs.krz,
+      settlementQP: 0,
+      notes: springs.notes,
+    })
+  }
+  return assigned
+}
+
+/** recalques na combinação quase-permanente + distorções angulares */
+function finishSoilResults(
+  project: Project,
+  model: AnalysisResults['model'],
+  combos: LoadCombo[],
+  casesEls: Partial<Record<CaseId, CaseResult>>,
+  soil: SoilInteractionResults,
+): void {
+  if (!soil.enabled || soil.items.length === 0) return
+  const qp = combos.find((c) => c.type === 'ELS-QP')
+  if (!qp) return
+  const uzOf = (nodeId: number): number => {
+    let s = 0
+    for (const [caseId, factor] of Object.entries(qp.factors)) {
+      const cr = casesEls[caseId as CaseId]
+      if (cr) s += factor * cr.displacements[nodeId][2]
+    }
+    return s
+  }
+  const pos = new Map<string, { x: number; y: number; s: number }>()
+  for (const item of soil.items) {
+    const col = project.columns.find((c) => c.id === item.columnId)
+    if (!col) continue
+    const node = baseNodeOf(model, col)
+    if (!node) continue
+    const settlement = Math.max(0, -uzOf(node.id))
+    item.settlementQP = settlement
+    soil.maxSettlement = Math.max(soil.maxSettlement, settlement)
+    pos.set(item.columnId, { x: col.pos.x, y: col.pos.y, s: settlement })
+  }
+  // distorção angular máxima entre pares de pilares (limite usual 1/500)
+  const entries = [...pos.entries()]
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const [idA, a] = entries[i]
+      const [idB, b] = entries[j]
+      const d = Math.hypot(a.x - b.x, a.y - b.y)
+      if (d < 0.5) continue
+      const dist = Math.abs(a.s - b.s) / d
+      if (!soil.maxDistortion || dist > soil.maxDistortion.value) {
+        const nameA = soil.items.find((it) => it.columnId === idA)?.name ?? '?'
+        const nameB = soil.items.find((it) => it.columnId === idB)?.name ?? '?'
+        soil.maxDistortion = { value: dist, pair: `${nameA}–${nameB}` }
+      }
+    }
+  }
+  if (soil.maxDistortion && soil.maxDistortion.value > 1 / 500) {
+    model.warnings.push(
+      `Recalque diferencial: distorção ${soil.maxDistortion.pair} = 1/${Math.round(
+        1 / soil.maxDistortion.value,
+      )} > 1/500 — avaliar fundações/rigidez.`,
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
+// planta de cargas na fundação (reações características por caso)
+// ---------------------------------------------------------------------------
+
+function computeFoundationLoads(
+  project: Project,
+  model: AnalysisResults['model'],
+  combos: LoadCombo[],
+  cases: AnalysisResults['cases'],
+): FoundationLoadRow[] {
+  const out: FoundationLoadRow[] = []
+  const eluCombos = combos.filter((c) => c.type === 'ELU')
+  for (const col of project.columns) {
+    const node = baseNodeOf(model, col)
+    if (!node) continue
+    const rows: FoundationLoadRow['cases'] = []
+    for (const caseId of ALL_CASES) {
+      const cr = cases.els[caseId]
+      if (!cr) continue
+      const r = cr.reactions.find((x) => x.nodeId === node.id)
+      if (!r) continue
+      rows.push({ caseId, fx: r.fx, fy: r.fy, fz: r.fz, mx: r.mx, my: r.my, mz: r.mz })
+    }
+    if (rows.length === 0) continue
+    const fzOf = (caseId: CaseId): number =>
+      rows.find((r) => r.caseId === caseId)?.fz ?? 0
+    let fzEluMax = 0
+    for (const combo of eluCombos) {
+      let fz = 0
+      for (const [caseId, factor] of Object.entries(combo.factors)) {
+        const cr = cases.elu[caseId as CaseId]
+        const r = cr?.reactions.find((x) => x.nodeId === node.id)
+        if (r) fz += factor * r.fz
+      }
+      fzEluMax = Math.max(fzEluMax, fz)
+    }
+    out.push({
+      columnId: col.id,
+      name: col.name,
+      x: col.pos.x,
+      y: col.pos.y,
+      cases: rows,
+      fzEluMax,
+      fzServ: fzOf('G') + fzOf('Q'),
+    })
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true }))
 }
 
 // ---------------------------------------------------------------------------
@@ -257,8 +490,9 @@ function computeStability(
   const drift: DriftResult[] = []
   const alpha: AnalysisResults['stability']['alpha'] = []
 
+  const noSecondOrder = { applied: false, factors: [], notes: [] }
   if (!model.wind || model.wind.length === 0) {
-    return { gammaZ: [], alpha: [], drift: [] }
+    return { gammaZ: [], alpha: [], drift: [], secondOrder: noSecondOrder }
   }
 
   const fake: AnalysisResults = { model } as AnalysisResults
@@ -380,7 +614,78 @@ function computeStability(
     })
   }
 
-  return { gammaZ: gammaZResults, alpha, drift }
+  return { gammaZ: gammaZResults, alpha, drift, secondOrder: noSecondOrder }
+}
+
+// ---------------------------------------------------------------------------
+// 2ª ordem global aproximada — NBR 6118 §15.7.2 (0,95·γz)
+// ---------------------------------------------------------------------------
+
+/**
+ * Para 1,1 < γz ≤ 1,3, os esforços globais finais (1ª + 2ª ordem) podem ser
+ * obtidos majorando os esforços horizontais das combinações ELU por 0,95·γz.
+ * A majoração é aplicada diretamente nos fatores dos casos de vento das
+ * combinações ELU (a análise é linear — superposição). γz > 1,3 está fora do
+ * campo de validade → aviso p/ análise rigorosa (P-Δ).
+ */
+function applySecondOrderAmplification(
+  project: Project,
+  model: AnalysisResults['model'],
+  combos: LoadCombo[],
+  stability: AnalysisResults['stability'],
+): AnalysisResults['stability']['secondOrder'] {
+  const notes: string[] = []
+  const factors: AnalysisResults['stability']['secondOrder']['factors'] = []
+  if (stability.gammaZ.length === 0) {
+    return { applied: false, factors, notes }
+  }
+
+  const caseOfDir: Record<GammaZResult['dir'], CaseId> = {
+    'X+': 'WXP',
+    'X-': 'WXN',
+    'Y+': 'WYP',
+    'Y-': 'WYN',
+  }
+  let applied = false
+  for (const gz of stability.gammaZ) {
+    let factor = 1
+    if (gz.classification === 'nos-moveis') {
+      factor = Math.max(1, 0.95 * gz.value)
+      if (!project.settings.secondOrderGammaZ) {
+        factor = 1
+        notes.push(
+          `γz ${gz.dir} = ${gz.value.toFixed(2)} > 1,10 — majoração 0,95·γz DESATIVADA nas configurações.`,
+        )
+      }
+    } else if (gz.classification === 'invalido') {
+      notes.push(
+        `γz ${gz.dir} > 1,30 — fora do campo de validade da majoração 0,95·γz; ` +
+          'necessária análise de 2ª ordem rigorosa (P-Δ) ou enrijecimento da estrutura.',
+      )
+      model.warnings.push(
+        `Estabilidade: γz na direção ${gz.dir} excede 1,30 — resultados ELU sem 2ª ordem global.`,
+      )
+    }
+    factors.push({ dir: gz.dir, gammaZ: gz.value, factor })
+    if (factor > 1) {
+      applied = true
+      const caseId = caseOfDir[gz.dir]
+      for (const combo of combos) {
+        if (combo.type !== 'ELU') continue
+        const f = combo.factors[caseId]
+        if (f !== undefined) {
+          combo.factors[caseId] = f * factor
+          combo.label += combo.label.includes('×0,95γz') ? '' : ' (W×0,95γz)'
+        }
+      }
+    }
+  }
+  if (applied) {
+    notes.push(
+      'Esforços horizontais das combinações ELU majorados por 0,95·γz (§15.7.2) — estrutura de nós móveis.',
+    )
+  }
+  return { applied, factors, notes }
 }
 
 // ---------------------------------------------------------------------------
@@ -426,12 +731,17 @@ function designBeams(
 
     let mdPos = 0
     let vd = 0
+    let td = 0
     for (const mi of memberIds) {
       const e = env.Mz[mi]
       for (let s = 0; s < e.max.length; s++) mdPos = Math.max(mdPos, e.max[s])
       const ev = env.Vy[mi]
       for (let s = 0; s < ev.max.length; s++) {
         vd = Math.max(vd, Math.abs(ev.max[s]), Math.abs(ev.min[s]))
+      }
+      const et = env.T[mi]
+      for (let s = 0; s < et.max.length; s++) {
+        td = Math.max(td, Math.abs(et.max[s]), Math.abs(et.min[s]))
       }
     }
     const firstEnv = env.Mz[memberIds[0]]
@@ -472,7 +782,24 @@ function designBeams(
       fctm: cp.fctm,
       fywk: project.settings.steel.fyk,
     })
-    const aswS = Math.max(shearR.aswS, shearR.aswSMin)
+
+    // torção (§17.5) — envoltória de T combinada ao cortante na biela
+    const torsionR = designBeamTorsion({
+      td,
+      vd,
+      vrd2: shearR.vrd2,
+      bw,
+      h,
+      c1: cover + 0.0063 + 0.008,
+      fck: cp.fck,
+      fcd: cp.fcd,
+      fctd: cp.fctd,
+      fywd: Math.min(fydV, 435_000),
+      fyd: fydV,
+    })
+
+    // estribos: cisalhamento (2 ramos) + torção (2·A90/s, um por ramo)
+    const aswS = Math.max(shearR.aswS, shearR.aswSMin) + 2 * torsionR.a90S
     // estribo φ5 (2 ramos): espaçamento s = 2·Aφ/AswS
     const phiT = 0.005
     const aPhi = (Math.PI * phiT * phiT) / 4
@@ -480,17 +807,23 @@ function designBeams(
     spacing = Math.floor(spacing * 100) / 100
     const stirrupSpec = `φ5 c/ ${Math.max(5, Math.round(spacing * 100))}`
 
+    // armadura de pele (§17.3.5.2.3)
+    const skin = skinReinforcement(bw, h)
+
     // massa de aço estimada do vão
     const stirrupPerimeter = 2 * (bw + h - 4 * cover) + 0.1
     const steelVol =
       positive.as * length +
       (negLeft?.as ?? 0) * 0.3 * length +
       (negRight?.as ?? 0) * 0.3 * length +
-      (aswS / 2) * stirrupPerimeter * length
+      (aswS / 2) * stirrupPerimeter * length +
+      torsionR.asl * length +
+      2 * skin.asPerFace * length
     const steelKg = steelVol * STEEL_DENSITY * 1.1 // +10% perdas/ancoragens
 
-    const fail = !positive.ok || !(negLeft?.ok ?? true) || !(negRight?.ok ?? true) || !shearR.ok
-    const warn = positive.xd > 0.35 || vd > 0.9 * shearR.vrd2
+    const fail =
+      !positive.ok || !(negLeft?.ok ?? true) || !(negRight?.ok ?? true) || !shearR.ok || !torsionR.ok
+    const warn = positive.xd > 0.35 || vd > 0.9 * shearR.vrd2 || torsionR.interaction > 0.9
     const [beamId] = key.split('|')
 
     out.push({
@@ -511,6 +844,17 @@ function designBeams(
         spec: stirrupSpec,
         ok: shearR.ok,
       },
+      torsion: {
+        td: torsionR.td,
+        he: torsionR.he,
+        trd2: torsionR.trd2,
+        a90S: torsionR.a90S,
+        asl: torsionR.asl,
+        interaction: torsionR.interaction,
+        ok: torsionR.ok,
+        negligible: torsionR.negligible,
+      },
+      skin,
       steelKg,
       status: fail ? 'falha' : warn ? 'atencao' : 'ok',
     })
@@ -535,13 +879,14 @@ function computeQuantities(
   let volBeams = 0
   let volSlabs = 0
   let formwork = 0
+  let slabAreaTotal = 0
 
   for (const m of model.members) {
     const { bw, h } = m.section
-    const a = bw * h
+    const a = m.props?.A ?? bw * h
     if (m.ref.kind === 'column') {
       volColumns += a * m.length
-      formwork += 2 * (bw + h) * m.length
+      formwork += (m.props?.perimeter ?? 2 * (bw + h)) * m.length
     } else {
       volBeams += a * m.length
       formwork += (bw + 2 * h) * m.length
@@ -559,8 +904,11 @@ function computeQuantities(
           return s + (p.x * q.y - q.x * p.y)
         }, 0) / 2,
       )
-      volSlabs += area * slab.thickness
-      formwork += area
+      // furos/aberturas não têm concreto nem fôrma
+      const net = Math.max(area - slabOpeningsArea(plan, slab), 0)
+      volSlabs += net * slab.thickness
+      formwork += net
+      slabAreaTotal += net
     }
   }
 
@@ -608,6 +956,13 @@ function computeQuantities(
   const total = volColumns + volBeams + volSlabs
   const steelTotal = steelBeams + steelColumns + steelSlabs
 
+  // estimativa de custo (custos unitários das configurações)
+  const uc = project.settings.costs
+  const costConcrete = total * uc.concretePerM3
+  const costSteel = steelTotal * 1.1 * uc.steelPerKg // +10% perdas (como na tabela de aço)
+  const costFormwork = formwork * uc.formworkPerM2
+  const costTotal = costConcrete + costSteel + costFormwork
+
   return {
     concrete: { columns: volColumns, beams: volBeams, slabs: volSlabs, total },
     formwork,
@@ -617,6 +972,14 @@ function computeQuantities(
       slabsEstimated: steelSlabs,
       total: steelTotal,
       ratePerM3: total > 0 ? steelTotal / total : 0,
+    },
+    cost: {
+      enabled: uc.enabled,
+      concrete: costConcrete,
+      steel: costSteel,
+      formwork: costFormwork,
+      total: costTotal,
+      perSlabArea: slabAreaTotal > 1 ? costTotal / slabAreaTotal : null,
     },
   }
 }

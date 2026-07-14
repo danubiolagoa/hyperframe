@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { createSampleProject } from '@hyperframe/engine'
 import { useStore } from '../store'
-import { openProjectFile } from '../io/fileio'
-import { IconBuilding, IconCube, IconNew, IconOpen } from '../components/Icons'
+import { openProjectFile, readAutosave } from '../io/fileio'
+import { IconBuilding, IconCube, IconNew, IconOpen, IconResults } from '../components/Icons'
 
 function OptionCard({
   icon,
@@ -54,6 +54,8 @@ export default function WelcomeModal() {
   const setWelcomeOpen = useStore((s) => s.setWelcomeOpen)
   const setWizardOpen = useStore((s) => s.setWizardOpen)
 
+  const autosave = useMemo(() => readAutosave(), [])
+
   return (
     <div className="modal-overlay">
       <div className="modal" style={{ width: 460 }}>
@@ -70,6 +72,17 @@ export default function WelcomeModal() {
               Análise e dimensionamento estrutural de edifícios — NBR 6118 · 6120 · 6123 · 8681
             </div>
           </div>
+
+          {autosave && (
+            <OptionCard
+              icon={<IconResults size={22} />}
+              title={`Recuperar trabalho não salvo — ${autosave.projectName}`}
+              subtitle={`Autosave de ${new Date(autosave.when).toLocaleString('pt-BR')}${
+                autosave.fileName ? ` · ${autosave.fileName.split('/').pop()}` : ''
+              }`}
+              onClick={() => loadProject(autosave.project, autosave.fileName)}
+            />
+          )}
 
           <OptionCard
             icon={<IconBuilding size={22} />}
@@ -103,7 +116,7 @@ export default function WelcomeModal() {
 
         <div className="modal-footer" style={{ justifyContent: 'center', borderTop: 'none' }}>
           <span className="faint" style={{ fontSize: 11, textAlign: 'center', lineHeight: 1.5 }}>
-            v0.2.0 — software em desenvolvimento; os resultados não substituem a verificação de um
+            v0.2.1 — software em desenvolvimento; os resultados não substituem a verificação de um
             engenheiro responsável.
           </span>
         </div>

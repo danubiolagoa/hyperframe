@@ -28,12 +28,13 @@ const REGION_PREFIX: Record<string, string> = {
   escada: 'ESC',
   reservatorio: 'RES',
   generica: 'CR',
+  furo: 'FUR',
 }
 
 export function nextRegionName(
   project: Project,
   planId: string,
-  kind: 'escada' | 'reservatorio' | 'generica',
+  kind: 'escada' | 'reservatorio' | 'generica' | 'furo',
 ): string {
   const plan = project.plans.find((p) => p.id === planId)
   const prefix = REGION_PREFIX[kind]

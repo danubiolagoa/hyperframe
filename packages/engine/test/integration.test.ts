@@ -3,6 +3,7 @@ import { createEmptyProject, createSampleProject } from '../src/model/factory'
 import { uid } from '../src/model/uid'
 import { analyze, comboReactions } from '../src/analyze'
 import { buildAnalysisModel } from '../src/analysis/buildModel'
+import { columnSectionInfo } from '../src/model/columnSection'
 import type { Project } from '../src/model/types'
 
 /** edifício mínimo: 1 pavimento, 4 pilares, 4 vigas de contorno, 1 laje */
@@ -183,7 +184,7 @@ describe('análise — projeto de exemplo completo (8 pavimentos)', () => {
       expect(cd.utilization).toBeLessThanOrEqual(1.01)
       expect(cd.barsN).toBeGreaterThanOrEqual(4)
       // ρ dentro dos limites normativos
-      const ac = cd.section.bw * cd.section.h
+      const ac = columnSectionInfo(cd.section).A
       expect(cd.as).toBeGreaterThanOrEqual(0.004 * ac - 1e-9)
       expect(cd.as).toBeLessThanOrEqual(0.04 * ac + 1e-9)
       expect(cd.barPositions.length).toBe(cd.barsN)
@@ -223,9 +224,11 @@ describe('análise — projeto de exemplo completo (8 pavimentos)', () => {
     expect(results.foundations).toHaveLength(12)
     for (const f of results.foundations) {
       expect(f.nServ).toBeGreaterThan(100)
-      expect(f.footing.sigma).toBeLessThanOrEqual(250 + 1e-6)
-      expect(f.footing.a).toBeGreaterThanOrEqual(f.footing.b - 1e-9)
-      expect(f.footing.h).toBeGreaterThanOrEqual(0.3)
+      expect(f.kind).toBe('sapata')
+      const ft = f.footing!
+      expect(ft.sigma).toBeLessThanOrEqual(250 + 1e-6)
+      expect(ft.a).toBeGreaterThanOrEqual(ft.b - 1e-9)
+      expect(ft.h).toBeGreaterThanOrEqual(0.3)
       expect(f.status).not.toBe('falha')
     }
   })

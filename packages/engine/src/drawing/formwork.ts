@@ -12,6 +12,11 @@
 import type { Project, Vec2 } from '../model/types'
 import type { Drawing, DrawingPrimitive } from './types'
 import { polygonCentroid } from '../geometry/geometry'
+import {
+  columnFootprint,
+  columnHalfExtents,
+  columnSectionInfo,
+} from '../model/columnSection'
 
 // ---------------------------------------------------------------------------
 // helpers de formatação (pt-BR) e geometria
@@ -166,8 +171,7 @@ export function buildFormworkDrawing(project: Project, planId: string): Drawing 
     if (y > cMaxY) cMaxY = y
   }
   for (const c of project.columns) {
-    const dx = (c.rotationDeg === 0 ? c.section.h : c.section.bw) / 2
-    const dy = (c.rotationDeg === 0 ? c.section.bw : c.section.h) / 2
+    const { dx, dy } = columnHalfExtents(c)
     addPt(c.pos.x - dx, c.pos.y - dy)
     addPt(c.pos.x + dx, c.pos.y + dy)
   }
@@ -279,7 +283,8 @@ export function buildFormworkDrawing(project: Project, planId: string): Drawing 
     })
   }
 
-  // ---- regiões de carga (escada, reservatório…): contorno tracejado ----
+  // ---- regiões (escada, reservatório, furo…): contorno tracejado; furos
+  //      levam X de vazio (convenção de planta de forma) ----
   for (const r of plan.loadRegions) {
     prims.push({
       kind: 'polyline',
@@ -289,11 +294,29 @@ export function buildFormworkDrawing(project: Project, planId: string): Drawing 
       dashed: true,
     })
     const c = polygonCentroid(r.polygon)
+    const isOpening = r.kind === 'furo' || (r.kind === 'escada' && (r.stair?.opening ?? true))
+    if (isOpening) {
+      let minX = Infinity
+      let minY = Infinity
+      let maxX = -Infinity
+      let maxY = -Infinity
+      for (const p of r.polygon) {
+        minX = Math.min(minX, p.x)
+        minY = Math.min(minY, p.y)
+        maxX = Math.max(maxX, p.x)
+        maxY = Math.max(maxY, p.y)
+      }
+      prims.push({ kind: 'line', x1: minX, y1: minY, x2: maxX, y2: maxY, layer: 'CONTORNO' })
+      prims.push({ kind: 'line', x1: minX, y1: maxY, x2: maxX, y2: minY, layer: 'CONTORNO' })
+    }
     prims.push({
       kind: 'text',
       x: c.x,
       y: c.y,
-      text: `${r.name} g=${fmt1(r.g)} q=${fmt1(r.q)} kN/m²`,
+      text:
+        r.kind === 'furo'
+          ? `${r.name} (furo)`
+          : `${r.name} g=${fmt1(r.g)} q=${fmt1(r.q)} kN/m²`,
       height: 0.15,
       layer: 'CONTORNO',
       align: 'center',
@@ -304,14 +327,30 @@ export function buildFormworkDrawing(project: Project, planId: string): Drawing 
   for (const b of plan.beams) {
     // remove vértices repetidos p/ não degenerar o offset
     const path: Vec2[] = []
-    for (const p of b.path) {
+    const segOf: number[] = [] // índice do segmento original de cada vértice
+    for (let i = 0; i < b.path.length; i++) {
+      const p = b.path[i]
       const last = path[path.length - 1]
-      if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1e-6) path.push(p)
+      if (!last || Math.hypot(p.x - last.x, p.y - last.y) > 1e-6) {
+        path.push(p)
+        segOf.push(Math.min(i, b.path.length - 2))
+      }
     }
     if (path.length < 2) continue
-    const half = b.section.bw / 2
-    prims.push({ kind: 'polyline', points: offsetPolyline(path, half), layer: 'VIGAS' })
-    prims.push({ kind: 'polyline', points: offsetPolyline(path, -half), layer: 'VIGAS' })
+    const hasOverrides = (b.segmentSections ?? []).some((s) => s != null)
+    if (!hasOverrides) {
+      const half = b.section.bw / 2
+      prims.push({ kind: 'polyline', points: offsetPolyline(path, half), layer: 'VIGAS' })
+      prims.push({ kind: 'polyline', points: offsetPolyline(path, -half), layer: 'VIGAS' })
+    } else {
+      // seção variável: contorno por trecho (sem esquadria entre larguras diferentes)
+      for (let i = 0; i + 1 < path.length; i++) {
+        const sec = b.segmentSections?.[segOf[i]] ?? b.section
+        const seg = [path[i], path[i + 1]]
+        prims.push({ kind: 'polyline', points: offsetPolyline(seg, sec.bw / 2), layer: 'VIGAS' })
+        prims.push({ kind: 'polyline', points: offsetPolyline(seg, -sec.bw / 2), layer: 'VIGAS' })
+      }
+    }
     prims.push({
       kind: 'polyline',
       points: path.map((p) => ({ ...p })),
@@ -333,39 +372,96 @@ export function buildFormworkDrawing(project: Project, planId: string): Drawing 
     let ang = (Math.atan2(dy, dx) * 180) / Math.PI
     if (ang > 90 || ang <= -90) ang += 180
     if (ang > 180) ang -= 360
-    const off = half + 0.12
+    const firstSec = b.segmentSections?.[segOf[0]] ?? b.section
+    const off = firstSec.bw / 2 + 0.12
+    const sectionsTxt = hasOverrides
+      ? [...new Set((path.slice(0, -1).map((_, i) => b.segmentSections?.[segOf[i]] ?? b.section)).map((s) => `${cmTxt(s.bw)}x${cmTxt(s.h)}`))].join(' / ')
+      : `${cmTxt(b.section.bw)}x${cmTxt(b.section.h)}`
     prims.push({
       kind: 'text',
       x: (path[0].x + path[1].x) / 2 + nx * off,
       y: (path[0].y + path[1].y) / 2 + ny * off,
-      text: `${b.name} ${cmTxt(b.section.bw)}x${cmTxt(b.section.h)}`,
+      text: `${b.name} ${sectionsTxt}`,
       height: 0.15,
       layer: 'TEXTOS',
       rotation: ang,
       align: 'center',
     })
+
+    // ---- furos na alma: marca tracejada sobre o eixo + rótulo ----
+    for (const op of b.openings ?? []) {
+      // ponto no eixo na posição op.x
+      let acc = 0
+      let px = path[0].x
+      let py = path[0].y
+      let tx = 1
+      let ty = 0
+      for (let i = 0; i + 1 < path.length; i++) {
+        const sl = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y)
+        if (op.x <= acc + sl || i + 2 === path.length) {
+          const t = sl < 1e-9 ? 0 : Math.min(Math.max((op.x - acc) / sl, 0), 1)
+          px = path[i].x + (path[i + 1].x - path[i].x) * t
+          py = path[i].y + (path[i + 1].y - path[i].y) * t
+          tx = (path[i + 1].x - path[i].x) / (sl || 1)
+          ty = (path[i + 1].y - path[i].y) / (sl || 1)
+          break
+        }
+        acc += sl
+      }
+      const hw = op.width / 2
+      const hb = (b.section.bw / 2) * 1.0
+      const nx2 = -ty
+      const ny2 = tx
+      prims.push({
+        kind: 'polyline',
+        points: [
+          { x: px - tx * hw - nx2 * hb, y: py - ty * hw - ny2 * hb },
+          { x: px + tx * hw - nx2 * hb, y: py + ty * hw - ny2 * hb },
+          { x: px + tx * hw + nx2 * hb, y: py + ty * hw + ny2 * hb },
+          { x: px - tx * hw + nx2 * hb, y: py - ty * hw + ny2 * hb },
+        ],
+        closed: true,
+        layer: 'CONTORNO',
+        dashed: true,
+      })
+      prims.push({
+        kind: 'text',
+        x: px + nx2 * (hb + 0.1),
+        y: py + ny2 * (hb + 0.1),
+        text: `FURO ${cmTxt(op.width)}x${cmTxt(op.height)}`,
+        height: 0.12,
+        layer: 'CONTORNO',
+        align: 'center',
+      })
+    }
   }
 
   // ---- pilares por último (aspecto preenchido sobre as vigas) ----
   for (const c of project.columns) {
-    const dx = (c.rotationDeg === 0 ? c.section.h : c.section.bw) / 2
-    const dy = (c.rotationDeg === 0 ? c.section.bw : c.section.h) / 2
-    prims.push({
-      kind: 'polyline',
-      points: [
-        { x: c.pos.x - dx, y: c.pos.y - dy },
-        { x: c.pos.x + dx, y: c.pos.y - dy },
-        { x: c.pos.x + dx, y: c.pos.y + dy },
-        { x: c.pos.x - dx, y: c.pos.y + dy },
-      ],
-      closed: true,
-      layer: 'PILARES',
-    })
+    const info = columnSectionInfo(c.section)
+    if (info.kind === 'circle') {
+      prims.push({
+        kind: 'circle',
+        cx: c.pos.x,
+        cy: c.pos.y,
+        r: info.bu / 2,
+        layer: 'PILARES',
+        filled: true,
+      })
+    } else {
+      prims.push({
+        kind: 'polyline',
+        points: columnFootprint(c),
+        closed: true,
+        layer: 'PILARES',
+      })
+    }
+    const { dx, dy } = columnHalfExtents(c)
     prims.push({
       kind: 'text',
       x: c.pos.x + dx + 0.06,
       y: c.pos.y + dy + 0.06,
-      text: `${c.name} ${cmTxt(c.section.bw)}x${cmTxt(c.section.h)}`,
+      text: `${c.name} ${info.label}`,
       height: 0.15,
       layer: 'TEXTOS',
     })

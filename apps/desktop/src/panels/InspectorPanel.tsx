@@ -4,14 +4,20 @@ import {
   FINISH_LOAD_PRESETS,
   LIVE_LOAD_PRESETS,
   REGION_PRESETS,
+  STAIR_DEFAULTS,
+  TANK_DEFAULTS,
   WALL_PRESETS,
+  columnSectionInfo,
   dist,
   parseDxf,
   polygonArea,
+  uid,
   type Beam,
+  type BeamOpening,
   type Column,
   type LoadRegion,
   type Project,
+  type SectionRect,
   type Slab,
   type WallLoad,
 } from '@hyperframe/engine'
@@ -20,6 +26,7 @@ import { NumberField } from './NumberField'
 import { cm, fmt, ROMAN } from './format'
 import { IconTrash } from '../components/Icons'
 import PlansManager from './PlansManager'
+import { MemberForcesSection } from './MemberDiagrams'
 
 // ---------------------------------------------------------------------------
 // blocos reutilizáveis
@@ -94,16 +101,24 @@ function DeleteButton({ onClick }: { onClick: () => void }) {
   )
 }
 
-function RotationSelect({ value, onChange }: { value: 0 | 90; onChange: (v: 0 | 90) => void }) {
+function RotationSelect({
+  value,
+  onChange,
+}: {
+  value: 0 | 90 | 180 | 270
+  onChange: (v: 0 | 90 | 180 | 270) => void
+}) {
   return (
     <select
       className="select"
       style={{ width: '100%' }}
       value={String(value)}
-      onChange={(e) => onChange(e.target.value === '90' ? 90 : 0)}
+      onChange={(e) => onChange(Number(e.target.value) as 0 | 90 | 180 | 270)}
     >
       <option value="0">0° — h ao longo de X</option>
       <option value="90">90° — h ao longo de Y</option>
+      <option value="180">180° — h ao longo de −X</option>
+      <option value="270">270° — h ao longo de −Y</option>
     </select>
   )
 }
@@ -300,26 +315,33 @@ function ProjectInspector({ project }: { project: Project }) {
         <h3 className="panel-title">Padrões de inserção</h3>
 
         <div className="field">
-          <label className="label">Pilar — seção bw × h (cm)</label>
+          <label className="label">Pilar — seção padrão bw × h (cm)</label>
           <div className="field-row">
             <NumberField
-              value={cm(defaults.columnSection.bw)}
+              value={cm(columnSectionInfo(defaults.columnSection).bu)}
               digits={1}
               min={10}
               max={300}
               onCommit={(v) =>
-                setDefaults({ columnSection: { ...defaults.columnSection, bw: v / 100 } })
+                setDefaults({
+                  columnSection: { bw: v / 100, h: columnSectionInfo(defaults.columnSection).bv },
+                })
               }
             />
             <NumberField
-              value={cm(defaults.columnSection.h)}
+              value={cm(columnSectionInfo(defaults.columnSection).bv)}
               digits={1}
               min={10}
               max={300}
               onCommit={(v) =>
-                setDefaults({ columnSection: { ...defaults.columnSection, h: v / 100 } })
+                setDefaults({
+                  columnSection: { bw: columnSectionInfo(defaults.columnSection).bu, h: v / 100 },
+                })
               }
             />
+          </div>
+          <div className="faint" style={{ fontSize: 10.5, marginTop: 2 }}>
+            Circular/L: mude a forma no inspetor do pilar após inserir.
           </div>
         </div>
 
@@ -478,9 +500,29 @@ function ProjectInspector({ project }: { project: Project }) {
 // pilar
 // ---------------------------------------------------------------------------
 
-function ColumnInspector({ col }: { col: Column }) {
+function ColumnInspector({ col, project }: { col: Column; project: Project }) {
   const updateColumn = useStore((s) => s.updateColumn)
   const deleteElement = useStore((s) => s.deleteElement)
+
+  const shape = col.section.shape === 'circle' ? 'circle' : col.section.shape === 'L' ? 'L' : 'rect'
+  const setShape = (next: string) => {
+    if (next === shape) return
+    const info = columnSectionInfo(col.section)
+    if (next === 'circle') {
+      updateColumn(col.id, { section: { shape: 'circle', d: Math.max(info.bu, info.bv) } })
+    } else if (next === 'L') {
+      const b = Math.max(info.bu, 0.4)
+      const h = Math.max(info.bv, 0.4)
+      updateColumn(col.id, {
+        section: { shape: 'L', b, h, tb: Math.min(0.2, b / 2), th: Math.min(0.2, h / 2) },
+      })
+    } else {
+      updateColumn(col.id, { section: { bw: Math.max(info.minDim, 0.19), h: Math.max(info.bv, 0.4) } })
+    }
+  }
+
+  const levels = project.levels
+  const isTransfer = col.baseLevelId !== levels[0]?.id
 
   return (
     <>
@@ -516,36 +558,163 @@ function ColumnInspector({ col }: { col: Column }) {
       </div>
 
       <div className="field">
-        <label className="label">Seção bw × h (cm)</label>
+        <label className="label">Forma da seção</label>
+        <select className="select" style={{ width: '100%' }} value={shape} onChange={(e) => setShape(e.target.value)}>
+          <option value="rect">Retangular</option>
+          <option value="circle">Circular</option>
+          <option value="L">Em L</option>
+        </select>
+      </div>
+
+      {col.section.shape === 'circle' ? (
+        <div className="field">
+          <label className="label">Diâmetro ø (cm)</label>
+          <NumberField
+            value={cm(col.section.d)}
+            digits={1}
+            min={14}
+            max={300}
+            style={{ width: '100%' }}
+            onCommit={(v) => updateColumn(col.id, { section: { shape: 'circle', d: v / 100 } })}
+          />
+        </div>
+      ) : col.section.shape === 'L' ? (
+        <LSectionFields colId={col.id} sec={col.section} />
+      ) : (
+        <RectSectionFields colId={col.id} sec={col.section} />
+      )}
+
+      {col.section.shape !== 'circle' && (
+        <div className="field">
+          <label className="label">Rotação</label>
+          <RotationSelect
+            value={col.rotationDeg}
+            onChange={(v) => updateColumn(col.id, { rotationDeg: v })}
+          />
+        </div>
+      )}
+
+      <div className="field">
+        <label className="label">Nasce em · morre em</label>
         <div className="field-row">
-          <NumberField
-            value={cm(col.section.bw)}
-            digits={1}
-            min={10}
-            max={300}
-            onCommit={(v) => updateColumn(col.id, { section: { ...col.section, bw: v / 100 } })}
-          />
-          <NumberField
-            value={cm(col.section.h)}
-            digits={1}
-            min={10}
-            max={300}
-            onCommit={(v) => updateColumn(col.id, { section: { ...col.section, h: v / 100 } })}
-          />
+          <select
+            className="select"
+            value={col.baseLevelId}
+            onChange={(e) => updateColumn(col.id, { baseLevelId: e.target.value })}
+          >
+            {levels.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          <select
+            className="select"
+            value={col.topLevelId}
+            onChange={(e) => updateColumn(col.id, { topLevelId: e.target.value })}
+          >
+            {levels.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      <div className="field">
-        <label className="label">Rotação</label>
-        <RotationSelect value={col.rotationDeg} onChange={(v) => updateColumn(col.id, { rotationDeg: v })} />
+      <div className="faint" style={{ fontSize: 11, marginTop: 10 }}>
+        {isTransfer
+          ? 'Pilar de transferência: precisa de viga sob o ponto no nível de nascimento.'
+          : 'Contínuo da fundação ao topo'}
       </div>
 
-      <div className="faint" style={{ fontSize: 11, marginTop: 10 }}>
-        Contínuo da fundação ao topo
-      </div>
+      <MemberForcesSection kind="column" id={col.id} />
 
       <DeleteButton onClick={() => deleteElement({ kind: 'column', id: col.id })} />
     </>
+  )
+}
+
+function LSectionFields({
+  colId,
+  sec,
+}: {
+  colId: string
+  sec: Extract<Column['section'], { shape: 'L' }>
+}) {
+  const updateColumn = useStore((s) => s.updateColumn)
+  return (
+    <>
+      <div className="field">
+        <label className="label">Caixa b × h (cm)</label>
+        <div className="field-row">
+          <NumberField
+            value={cm(sec.b)}
+            digits={1}
+            min={20}
+            max={300}
+            onCommit={(v) => updateColumn(colId, { section: { ...sec, b: v / 100 } })}
+          />
+          <NumberField
+            value={cm(sec.h)}
+            digits={1}
+            min={20}
+            max={300}
+            onCommit={(v) => updateColumn(colId, { section: { ...sec, h: v / 100 } })}
+          />
+        </div>
+      </div>
+      <div className="field">
+        <label className="label">Abas tb × th (cm)</label>
+        <div className="field-row">
+          <NumberField
+            value={cm(sec.tb)}
+            digits={1}
+            min={12}
+            max={100}
+            onCommit={(v) => updateColumn(colId, { section: { ...sec, tb: v / 100 } })}
+          />
+          <NumberField
+            value={cm(sec.th)}
+            digits={1}
+            min={12}
+            max={100}
+            onCommit={(v) => updateColumn(colId, { section: { ...sec, th: v / 100 } })}
+          />
+        </div>
+      </div>
+    </>
+  )
+}
+
+function RectSectionFields({
+  colId,
+  sec,
+}: {
+  colId: string
+  sec: Extract<Column['section'], { bw: number }>
+}) {
+  const updateColumn = useStore((s) => s.updateColumn)
+  return (
+    <div className="field">
+      <label className="label">Seção bw × h (cm)</label>
+      <div className="field-row">
+        <NumberField
+          value={cm(sec.bw)}
+          digits={1}
+          min={10}
+          max={300}
+          onCommit={(v) => updateColumn(colId, { section: { bw: v / 100, h: sec.h } })}
+        />
+        <NumberField
+          value={cm(sec.h)}
+          digits={1}
+          min={10}
+          max={300}
+          onCommit={(v) => updateColumn(colId, { section: { bw: sec.bw, h: v / 100 } })}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -600,8 +769,182 @@ function BeamInspector({ beam }: { beam: Beam }) {
 
       <Row label="Comprimento total" value={`${fmt(length, 2)} m`} />
 
+      {beam.path.length > 2 && <SegmentSectionsEditor beam={beam} />}
+
+      <BeamOpeningsEditor beam={beam} length={length} />
+
+      <MemberForcesSection kind="beam" id={beam.id} />
+
       <DeleteButton onClick={() => deleteElement({ kind: 'beam', id: beam.id })} />
     </>
+  )
+}
+
+/** seção por trecho da polilinha (TQS: "alterar seção" por vão) */
+function SegmentSectionsEditor({ beam }: { beam: Beam }) {
+  const updateBeam = useStore((s) => s.updateBeam)
+  const nSegs = beam.path.length - 1
+  const overrides: (SectionRect | null)[] = Array.from(
+    { length: nSegs },
+    (_, i) => beam.segmentSections?.[i] ?? null,
+  )
+  const setSegment = (i: number, sec: SectionRect | null) => {
+    const next = [...overrides]
+    next[i] = sec
+    const any = next.some((s) => s != null)
+    updateBeam(beam.id, { segmentSections: any ? next : undefined })
+  }
+  const segLength = (i: number) => dist(beam.path[i], beam.path[i + 1])
+
+  return (
+    <div className="field" style={{ marginTop: 10 }}>
+      <label className="label">Seção por trecho</label>
+      {overrides.map((ov, i) => {
+        const eff = ov ?? beam.section
+        return (
+          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+            <span className="muted" style={{ fontSize: 11, width: 76, flex: 'none' }}>
+              {i + 1}º ({fmt(segLength(i), 1)} m)
+            </span>
+            <NumberField
+              value={cm(eff.bw)}
+              digits={0}
+              min={10}
+              max={300}
+              style={{ width: 52 }}
+              onCommit={(v) => setSegment(i, { bw: v / 100, h: eff.h })}
+            />
+            <NumberField
+              value={cm(eff.h)}
+              digits={0}
+              min={10}
+              max={300}
+              style={{ width: 52 }}
+              onCommit={(v) => setSegment(i, { bw: eff.bw, h: v / 100 })}
+            />
+            {ov ? (
+              <button
+                className="btn"
+                title="Voltar à seção padrão da viga"
+                style={{ padding: '2px 7px', fontSize: 11 }}
+                onClick={() => setSegment(i, null)}
+              >
+                ↺
+              </button>
+            ) : (
+              <span className="faint" style={{ fontSize: 10 }}>
+                padrão
+              </span>
+            )}
+          </div>
+        )
+      })}
+      <div className="faint" style={{ fontSize: 10.5 }}>
+        Mudança de seção corta o vão de dimensionamento no ponto.
+      </div>
+    </div>
+  )
+}
+
+/** furos que atravessam a alma (NBR 6118 §13.2.5) */
+function BeamOpeningsEditor({ beam, length }: { beam: Beam; length: number }) {
+  const updateBeam = useStore((s) => s.updateBeam)
+  const openings = beam.openings ?? []
+
+  const patch = (id: string, p: Partial<Omit<BeamOpening, 'id'>>) => {
+    updateBeam(beam.id, {
+      openings: openings.map((o) => (o.id === id ? { ...o, ...p } : o)),
+    })
+  }
+
+  return (
+    <div className="field" style={{ marginTop: 10 }}>
+      <label className="label">Furos na alma (§13.2.5)</label>
+      {openings.map((op) => (
+        <div
+          key={op.id}
+          style={{
+            border: '1px solid var(--border, #333a48)',
+            borderRadius: 6,
+            padding: '6px 8px',
+            marginBottom: 6,
+          }}
+        >
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+            <span className="muted" style={{ fontSize: 11, width: 46, flex: 'none' }}>
+              x (m)
+            </span>
+            <NumberField
+              value={op.x}
+              digits={2}
+              min={0}
+              max={Math.max(length, 0.1)}
+              style={{ flex: 1 }}
+              onCommit={(v) => patch(op.id, { x: v })}
+            />
+            <button
+              className="btn"
+              title="Remover furo"
+              style={{ padding: '2px 7px', color: 'var(--err)' }}
+              onClick={() =>
+                updateBeam(beam.id, { openings: openings.filter((o) => o.id !== op.id) })
+              }
+            >
+              <IconTrash size={12} />
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span className="muted" style={{ fontSize: 11, width: 46, flex: 'none' }}>
+              c×a·d (cm)
+            </span>
+            <NumberField
+              value={cm(op.width)}
+              digits={0}
+              min={2}
+              max={100}
+              style={{ width: 48 }}
+              onCommit={(v) => patch(op.id, { width: v / 100 })}
+            />
+            <NumberField
+              value={cm(op.height)}
+              digits={0}
+              min={2}
+              max={100}
+              style={{ width: 48 }}
+              onCommit={(v) => patch(op.id, { height: v / 100 })}
+            />
+            <NumberField
+              value={cm(op.yOffset)}
+              digits={0}
+              min={-100}
+              max={100}
+              style={{ width: 48 }}
+              onCommit={(v) => patch(op.id, { yOffset: v / 100 })}
+            />
+          </div>
+        </div>
+      ))}
+      <button
+        className="btn"
+        style={{ width: '100%', fontSize: 12 }}
+        onClick={() =>
+          updateBeam(beam.id, {
+            openings: [
+              ...openings,
+              { id: uid('op'), x: Math.round(length * 50) / 100, width: 0.1, height: 0.1, yOffset: 0 },
+            ],
+          })
+        }
+      >
+        + Furo (passagem de tubulação)
+      </button>
+      {openings.length > 0 && (
+        <div className="faint" style={{ fontSize: 10.5, marginTop: 4 }}>
+          c = comprimento, a = altura, d = desvio do meio da alma (+ p/ cima). Verificação de
+          dispensa (§13.2.5.2) nos resultados.
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -727,6 +1070,13 @@ function WallLoadInspector({ wl, project }: { wl: WallLoad; project: Project }) 
 
   const beam = project.plans.flatMap((p) => p.beams).find((b) => b.id === wl.beamId)
   const wallMatch = WALL_PRESETS.find((p) => p.label === wl.label)
+  const beamLength = useMemo(() => {
+    if (!beam) return 0
+    let L = 0
+    for (let i = 0; i + 1 < beam.path.length; i++) L += dist(beam.path[i], beam.path[i + 1])
+    return L
+  }, [beam])
+  const partial = wl.x0 !== undefined && wl.x1 !== undefined
 
   return (
     <>
@@ -746,6 +1096,40 @@ function WallLoadInspector({ wl, project }: { wl: WallLoad; project: Project }) 
           onCommit={(v) => updateWallLoad(wl.id, { w: v })}
         />
       </div>
+
+      <Check
+        label="Aplicar só em um trecho da viga"
+        checked={partial}
+        onChange={(v) =>
+          updateWallLoad(
+            wl.id,
+            v
+              ? { x0: 0, x1: Math.round(beamLength * 100) / 100 }
+              : { x0: undefined, x1: undefined },
+          )
+        }
+      />
+      {partial && (
+        <div className="field">
+          <label className="label">Trecho x₀ · x₁ (m do início da viga)</label>
+          <div className="field-row">
+            <NumberField
+              value={wl.x0 ?? 0}
+              digits={2}
+              min={0}
+              max={beamLength}
+              onCommit={(v) => updateWallLoad(wl.id, { x0: v })}
+            />
+            <NumberField
+              value={wl.x1 ?? beamLength}
+              digits={2}
+              min={0}
+              max={beamLength}
+              onCommit={(v) => updateWallLoad(wl.id, { x1: v })}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="field">
         <label className="label">Preset (pé-direito 2,40 m)</label>
@@ -813,37 +1197,227 @@ function LoadRegionInspector({ region }: { region: LoadRegion }) {
         </select>
       </div>
 
-      <div className="field">
-        <label className="label">Permanente adicional g (kN/m²)</label>
-        <NumberField
-          value={region.g}
-          digits={2}
-          min={0}
-          max={100}
-          style={{ width: '100%' }}
-          onCommit={(v) => updateLoadRegion(region.id, { g: v })}
-        />
-      </div>
+      {region.kind !== 'furo' && (
+        <>
+          <div className="field">
+            <label className="label">Permanente adicional g (kN/m²)</label>
+            <NumberField
+              value={region.g}
+              digits={2}
+              min={0}
+              max={100}
+              style={{ width: '100%' }}
+              onCommit={(v) => updateLoadRegion(region.id, { g: v })}
+            />
+          </div>
 
-      <div className="field">
-        <label className="label">Variável adicional q (kN/m²)</label>
-        <NumberField
-          value={region.q}
-          digits={2}
-          min={0}
-          max={100}
-          style={{ width: '100%' }}
-          onCommit={(v) => updateLoadRegion(region.id, { q: v })}
-        />
-      </div>
+          <div className="field">
+            <label className="label">Variável adicional q (kN/m²)</label>
+            <NumberField
+              value={region.q}
+              digits={2}
+              min={0}
+              max={100}
+              style={{ width: '100%' }}
+              onCommit={(v) => updateLoadRegion(region.id, { q: v })}
+            />
+          </div>
+        </>
+      )}
 
       <Row label="Área" value={`${fmt(area, 2)} m²`} />
 
       <div className="faint" style={{ fontSize: 11, marginTop: 8 }}>
-        Distribuída às lajes sobrepostas (proporcional à área de interseção).
+        {region.kind === 'furo'
+          ? 'Abertura na laje: remove peso próprio/revestimento/sobrecarga na área e aparece como furo no 3D e na planta de forma. Prever reforço nas bordas.'
+          : 'Distribuída às lajes sobrepostas (proporcional à área de interseção).'}
       </div>
 
+      {region.kind === 'escada' && <StairParamsEditor region={region} />}
+      {region.kind === 'reservatorio' && <TankParamsEditor region={region} />}
+
       <DeleteButton onClick={() => deleteElement({ kind: 'loadRegion', id: region.id })} />
+    </>
+  )
+}
+
+/** parâmetros do lance p/ o dimensionamento da escada (aba Escadas) */
+function StairParamsEditor({ region }: { region: LoadRegion }) {
+  const updateLoadRegion = useStore((s) => s.updateLoadRegion)
+  const st = { ...STAIR_DEFAULTS, ...(region.stair ?? {}) }
+  const upd = (patch: Partial<typeof st>) =>
+    updateLoadRegion(region.id, { stair: { ...st, ...patch } })
+
+  return (
+    <>
+      <h3 className="panel-title" style={{ marginTop: 14 }}>
+        Dimensionamento do lance
+      </h3>
+      <div className="field-row">
+        <div className="field">
+          <label className="label">Espessura (cm)</label>
+          <NumberField
+            value={st.waist * 100}
+            digits={0}
+            min={8}
+            max={30}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ waist: v / 100 })}
+          />
+        </div>
+        <div className="field">
+          <label className="label">Espelho (cm)</label>
+          <NumberField
+            value={st.riser * 100}
+            digits={1}
+            min={14}
+            max={22}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ riser: v / 100 })}
+          />
+        </div>
+        <div className="field">
+          <label className="label">Piso (cm)</label>
+          <NumberField
+            value={st.tread * 100}
+            digits={1}
+            min={22}
+            max={35}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ tread: v / 100 })}
+          />
+        </div>
+      </div>
+      <div className="field-row">
+        <div className="field">
+          <label className="label">Revestimento (kN/m²)</label>
+          <NumberField
+            value={st.finish}
+            digits={2}
+            min={0}
+            max={5}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ finish: v })}
+          />
+        </div>
+        <div className="field">
+          <label className="label">Vão do lance (m; 0 = auto)</label>
+          <NumberField
+            value={st.span ?? 0}
+            digits={2}
+            min={0}
+            max={12}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ span: v })}
+          />
+        </div>
+      </div>
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 12,
+          margin: '6px 0 2px',
+          cursor: 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={st.reverse ?? false}
+          onChange={(e) => upd({ reverse: e.target.checked })}
+        />
+        Inverter sentido de subida (3D)
+      </label>
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 12,
+          margin: '2px 0',
+          cursor: 'pointer',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={st.opening ?? true}
+          onChange={(e) => upd({ opening: e.target.checked })}
+        />
+        Abrir furo na laje deste pavimento
+      </label>
+      <div className="faint" style={{ fontSize: 11, marginTop: 4 }}>
+        Lance dimensionado como laje armada em uma direção — resultados na aba Escadas. No 3D o
+        lance sobe do pavimento inferior até este pavimento, ao longo do lado maior da região.
+      </div>
+    </>
+  )
+}
+
+/** parâmetros do reservatório p/ o dimensionamento (aba Reservatórios) */
+function TankParamsEditor({ region }: { region: LoadRegion }) {
+  const updateLoadRegion = useStore((s) => s.updateLoadRegion)
+  const tk = { ...TANK_DEFAULTS, ...(region.tank ?? {}) }
+  const upd = (patch: Partial<typeof tk>) =>
+    updateLoadRegion(region.id, { tank: { ...tk, ...patch } })
+
+  return (
+    <>
+      <h3 className="panel-title" style={{ marginTop: 14 }}>
+        Dimensionamento do reservatório
+      </h3>
+      <div className="field-row">
+        <div className="field">
+          <label className="label">Lâmina d'água (m)</label>
+          <NumberField
+            value={tk.waterHeight}
+            digits={2}
+            min={0.3}
+            max={6}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ waterHeight: v })}
+          />
+        </div>
+        <div className="field">
+          <label className="label">Parede (cm)</label>
+          <NumberField
+            value={tk.wallThickness * 100}
+            digits={0}
+            min={10}
+            max={40}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ wallThickness: v / 100 })}
+          />
+        </div>
+      </div>
+      <div className="field-row">
+        <div className="field">
+          <label className="label">Fundo (cm)</label>
+          <NumberField
+            value={tk.bottomThickness * 100}
+            digits={0}
+            min={10}
+            max={40}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ bottomThickness: v / 100 })}
+          />
+        </div>
+        <div className="field">
+          <label className="label">Tampa (cm)</label>
+          <NumberField
+            value={tk.topThickness * 100}
+            digits={0}
+            min={8}
+            max={30}
+            style={{ width: '100%' }}
+            onCommit={(v) => upd({ topThickness: v / 100 })}
+          />
+        </div>
+      </div>
+      <div className="faint" style={{ fontSize: 11, marginTop: 4 }}>
+        Lembre de ajustar g/q acima p/ o peso real (água = 10·lâmina em q). Resultados na aba
+        Reservatórios.
+      </div>
     </>
   )
 }
@@ -860,7 +1434,7 @@ export default function InspectorPanel() {
   if (selection) {
     if (selection.kind === 'column') {
       const col = project.columns.find((c) => c.id === selection.id)
-      if (col) content = <ColumnInspector key={col.id} col={col} />
+      if (col) content = <ColumnInspector key={col.id} col={col} project={project} />
     } else if (selection.kind === 'beam') {
       const beam = project.plans.flatMap((p) => p.beams).find((b) => b.id === selection.id)
       if (beam) content = <BeamInspector key={beam.id} beam={beam} />

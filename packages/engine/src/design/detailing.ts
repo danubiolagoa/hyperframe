@@ -10,6 +10,7 @@ import type {
 } from '../analysis/types'
 import { concreteProps, coverFor, fyd as fydOf } from '../nbr/nbr6118/materials'
 import { basicAnchorage, fbd, requiredAnchorage } from '../nbr/nbr6118/anchorage'
+import { columnSectionInfo, insetRectilinear } from '../model/columnSection'
 
 /**
  * Detalhamento PRELIMINAR (posições retas + estribos) e tabela de aço.
@@ -135,18 +136,30 @@ export function runDetailing(
     }
     const lap = round5(basicAnchorage(cd.barsPhi, fydV, fbdGood))
     const el = `Pilar ${cd.name}`
+    const info = columnSectionInfo(col.section)
+    // comprimento do estribo: contorno recuado do cobrimento + gancho
+    let stirrupPerim: number
+    if (info.kind === 'circle') {
+      stirrupPerim = Math.PI * Math.max(info.bu - 2 * 0.025, 0.05)
+    } else {
+      const inset = insetRectilinear(info.polygon, 0.025)
+      stirrupPerim = 0
+      for (let i = 0; i < inset.length; i++) {
+        const q = inset[(i + 1) % inset.length]
+        stirrupPerim += Math.hypot(q.x - inset[i].x, q.y - inset[i].y)
+      }
+    }
     for (const hs of storyHeights) {
       pushItem(cd.barsPhi, cd.barsN, round5(hs + lap), el, 1)
       const nStirrups = Math.max(2, Math.ceil(hs / cd.stirrupSpacing))
-      const su = round5(
-        2 * (col.section.bw - 2 * 0.025 + (col.section.h - 2 * 0.025)) + 0.15,
-      )
+      const su = round5(stirrupPerim + 0.15)
       pushItem(cd.stirrupPhi, nStirrups, su, el, 1)
     }
     columns.push({
       columnId: cd.columnId,
       name: cd.name,
       section: cd.section,
+      sectionLabel: info.label,
       barsN: cd.barsN,
       barsPhi: cd.barsPhi,
       barPositions: cd.barPositions,

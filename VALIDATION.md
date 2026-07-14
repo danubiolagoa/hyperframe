@@ -3,9 +3,9 @@
 Software estrutural só tem valor se merecer confiança. Este documento define como o
 HyperFrame é validado — e o que ainda falta antes de uso em projeto real.
 
-## Estado atual (v0.2)
+## Estado atual (v0.2.2)
 
-### Validação automatizada (roda em `npm test` — 107 testes)
+### Validação automatizada (roda em `npm test` — 244 testes)
 
 **Âncoras analíticas (soluções fechadas):**
 - Matriz de rigidez local 12×12: simetria, termos EA/L e 12EI/L³
@@ -40,11 +40,75 @@ HyperFrame é validado — e o que ainda falta antes de uso em projeto real.
   refletida nos pesos de pavimento (γz) e nas reações
 - DXF: roundtrip write→parse preserva entidades; blocos/INSERT com rotação/escala
 
+**Módulos v0.2.1 (paridade com o tour do TQS — âncoras à mão):**
+- Desaprumo (§11.3.3.4.1): θ1 com clamps 1/300–1/200; θa p/ n prumadas; forças por nível;
+  regra vento×desaprumo pelos momentos de tombamento (3 ramos testados)
+- 2ª ordem 0,95·γz (§15.7.2): fator aplicado só p/ 1,1 < γz ≤ 1,3; consistência
+  fator↔γz↔rótulos de combinação no edifício exemplo
+- Torção (§17.5): he/Ae/TRd2/A90-s/ΔAsl p/ 20×50 C25 (Td = 10 kN·m); interação
+  Vd/VRd2 + Td/TRd2; limiar de torção de compatibilidade desprezível
+- Fissuração ELS-W (§17.3.3.2): LN estádio II, σs, w1/w2/wk p/ caso de referência;
+  limites tab. 13.4 por CAA
+- Escadas: cargas do lance inclinado (25·t/cosθ + degraus), Md = wL²/8, As, flecha com
+  Branson, fórmula de Blondel
+- Reservatórios: M = γw·hw³/6 na parede, estanqueidade wk ≤ 0,2 mm com iteração de As,
+  fundo engastado c/ coluna d'água, volume/peso em operação
+- Incêndio (NBR 14432/15200): TRRF por grupo×altura; tabelas 4/5 (vigas) e 6/7 (lajes)
+  transcritas e testadas ponto a ponto c/ interpolação; pilares pelo método analítico
+  (TRF = 120·(ΣR/120)^1,8) c/ âncora fechada
+- Blocos sobre estacas (Blévot): d p/ α∈[45°,55°], tirantes 2/3/4/5 estacas, tensões nas
+  bielas vs limites 1,4/1,75/2,1·KR·fcd, capacidade da estaca c/ peso do bloco
+- Memorial PDF: writer validado estruturalmente (xref aponta p/ cada objeto, startxref,
+  %%EOF), WinAnsi/escapes de acentos, transliteração de símbolos, presença das 15 seções
+  e dos dados de dimensionamento no texto (streams sem compressão — pesquisável)
+- Furos/aberturas de laje: desconto exato de g/q na interseção (âncoras fechadas com a
+  escada do exemplo: Δg = 17,64 kN, Δq = 5,88 kN), recorte dos polígonos pelo contorno
+  da laje, escada com/sem furo, nota de reforço de borda no dimensionamento
+
+**Módulos v0.2.2 (paridade com o TQS Passo-a-Passo — âncoras à mão):**
+- Seções de pilar: círculo com A/I/J exatos (πd²/4, πd⁴/64, πd⁴/32) e polígono de 48
+  lados conservador em área (< 0,3%); L 50×50 t20/20 com centróide/inércias compostas
+  (A = 0,16 m², I = 3,1271e-3 m⁴) e J de paredes finas; contorno recuado retilíneo;
+  esmagamento centrado do círculo por fórmula fechada; curva de interação ~radial;
+  rotação 0/90/180/270 nos eixos locais (yL/zL) e na caixa envolvente
+- Furos de viga (§13.2.5): as 4 condições de dispensa testadas isoladamente (face,
+  12 cm/h·⅓, apoio 2h, vizinho 2h) + limite h/3 governando em viga baixa + posição
+  relativa a pilares no projeto exemplo
+- Seção variável por trecho: corte do vão de dimensionamento na mudança de seção
+  (com e sem override), seções corretas por barra do pórtico
+- Carga de parede parcial: força total conservada (trecho = metade → 50% da carga)
+- Borda livre de laje: quinhões redistribuídos conservam TODA a carga (g e q) nas
+  3 vigas restantes; aviso de redistribuição emitido
+- Geotecnia: Es = α·K·NSPT (areia N20 → 54 MPa; argila N10 → 14 MPa); média ponderada
+  por camadas; Aoki–Velloso com âncora integral à mão (hélice ø40, L=10 m, 2 camadas:
+  fuste por camada + ponta + FS 2); mola de sapata kv = A·Es/(B(1−ν²)·0,88) exata;
+  layouts de 1–5 estacas (braços e Σkv)
+- Apoios elásticos no solver: recalque = N/kv exato (mola vertical isolada) e reação
+  recuperada; interação solo-estrutura de ponta a ponta no edifício exemplo
+  (molas em todos os pilares, recalques em mm, ΣFz = peso total preservado)
+- Consistência: modelo saudável sem graves; sem pilares/pilares sobrepostos/viga sem
+  apoio/furo ≥ altura/pilar no ar → apontamentos com severidade correta
+- Desenhos novos: corte esquemático (níveis, pilares do alinhamento, vigas seccionadas
+  com seção, cotas de pé-direito), planta de cargas (G/Q/ELU por pilar + tabela),
+  prancha A0–A4 com moldura/carimbo (dimensões exatas do papel, escala automática
+  padronizada, conteúdo dentro da moldura, campos preenchidos)
+
 ### O que os testes NÃO cobrem ainda
 
 - Comparação independente com outro software (Ftool, Eberick, SAP2000)
 - Cargas trapezoidais exatas de laje (usamos uniforme equivalente por quinhão)
 - Efeitos que o v0.1 não modela (ver ROADMAP: dívidas técnicas)
+- Escadas: patamares/apoios reais (lance tratado biapoiado no vão em planta — conservador)
+- Reservatórios: placas com tabelas exatas (paredes em balanço na base — conservador);
+  empuxo de terra em reservatórios enterrados não modelado
+- Incêndio: TRRF automático usa a tab. A.1 genérica — isenções e divisões de ocupação
+  específicas exigem confirmação manual; lajes lisas/nervuradas fora do escopo
+- Interação solo-estrutura: correlações empíricas (Teixeira & Godoy, Aoki–Velloso) com
+  UMA sondagem p/ todo o terreno; CRH por fator prático (0,5·CRV editável); molas de
+  estaca sem transferência de carga por camada — recalques são ESTIMATIVAS de análise,
+  não previsão geotécnica (NBR 6122 exige laudo)
+- Furos de viga: verificada a DISPENSA (§13.2.5.2); a verificação da região não
+  dispensada (bielas/tirantes, Vierendeel) é do engenheiro
 
 ## Plano de validação v0.2 (pré-beta) — **bloqueante para uso comercial**
 

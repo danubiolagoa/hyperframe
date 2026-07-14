@@ -1,4 +1,4 @@
-import type { SectionRect } from '../model/types'
+import type { ColumnSection, SectionRect } from '../model/types'
 
 /**
  * Modelo de análise: pórtico espacial (6 GDL/nó) com diafragma rígido por
@@ -15,8 +15,14 @@ export interface ANode {
   /** índice do nível no projeto */
   levelIndex: number
   kind: 'structural' | 'master'
-  /** engastado na base */
+  /** apoio na base (engaste ou molas) */
   support: boolean
+  /**
+   * Molas de apoio [kx, ky, kz, krx, kry, krz] (kN/m, kN·m/rad) — interação
+   * solo-estrutura. Valor ≤ 0 = GDL prescrito (engastado). Ausente = engaste
+   * total.
+   */
+  springs?: number[]
 }
 
 export interface MemberRef {
@@ -33,7 +39,10 @@ export interface AMember {
   ni: number
   nj: number
   ref: MemberRef
+  /** caixa envolvente da seção (bw×h); seções não retangulares trazem `props` */
   section: SectionRect
+  /** propriedades reais (círculo/L): área, inércias, torção e perímetro de fôrma */
+  props?: { A: number; Iy: number; Iz: number; J: number; perimeter: number }
   length: number
   /** eixos locais (x ao longo do membro; y "para cima" nas vigas) */
   xLocal: Vec3
@@ -111,8 +120,21 @@ export interface AnalysisModel {
   nodes: ANode[]
   members: AMember[]
   masters: { levelIndex: number; nodeId: number }[]
-  /** cargas de vento geradas (se habilitado) */
+  /** cargas de vento geradas (se habilitado) — já compostas com o desaprumo */
   wind: WindDirectionLoads[] | null
+  /** desaprumo global (NBR 6118 §11.3.3.4.1) aplicado às ações laterais */
+  imperfections: {
+    theta1: number
+    thetaA: number
+    /** momento de tombamento característico do desaprumo, kN·m */
+    baseMoment: number
+    rules: {
+      dir: 'XP' | 'XN' | 'YP' | 'YN'
+      rule: 'somente-vento' | 'somente-desaprumo' | 'vento+desaprumo'
+      /** momento de tombamento característico do vento puro, kN·m */
+      mWind: number
+    }[]
+  } | null
   /** carga vertical total característica por nível (G, Q), kN — p/ γz */
   levelWeights: { levelIndex: number; z: number; G: number; Q: number }[]
   warnings: string[]
@@ -164,10 +186,19 @@ export interface DriftResult {
   ok: boolean
 }
 
+/** majoração aproximada de 2ª ordem global 0,95·γz (NBR 6118 §15.7.2) */
+export interface SecondOrderResult {
+  applied: boolean
+  /** fator aplicado aos casos de vento por direção (1,0 = sem majoração) */
+  factors: { dir: 'X+' | 'X-' | 'Y+' | 'Y-'; gammaZ: number; factor: number }[]
+  notes: string[]
+}
+
 export interface StabilityResults {
   gammaZ: GammaZResult[]
   alpha: AlphaResult[]
   drift: DriftResult[]
+  secondOrder: SecondOrderResult
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +239,33 @@ export interface ShearDesign {
   note?: string
 }
 
+/** torção (NBR 6118 §17.5) — seção vazada equivalente, θ = 45° */
+export interface TorsionDesign {
+  /** momento torçor de cálculo (envoltória), kN·m */
+  td: number
+  /** espessura da parede equivalente, m */
+  he: number
+  /** resistência da biela: TRd2, kN·m */
+  trd2: number
+  /** estribos adicionais (1 ramo): A90/s, m²/m */
+  a90S: number
+  /** armadura longitudinal adicional total, m² */
+  asl: number
+  /** interação biela: Vd/VRd2 + Td/TRd2 ≤ 1 */
+  interaction: number
+  ok: boolean
+  /** torção desprezível (Td < limite de compatibilidade) */
+  negligible: boolean
+}
+
+/** armadura de pele (§17.3.5.2.3) — obrigatória p/ h > 60 cm */
+export interface SkinReinforcement {
+  required: boolean
+  /** As por face, m² */
+  asPerFace: number
+  spec: string
+}
+
 export interface BeamSpanDesign {
   beamId: string
   beamName: string
@@ -220,6 +278,8 @@ export interface BeamSpanDesign {
   negLeft: FlexureDesign | null
   negRight: FlexureDesign | null
   shear: ShearDesign
+  torsion: TorsionDesign
+  skin: SkinReinforcement
   /** massa de aço estimada do vão, kg */
   steelKg: number
   status: 'ok' | 'atencao' | 'falha'
@@ -229,7 +289,9 @@ export interface BeamSpanDesign {
 export interface ColumnDesignResult {
   columnId: string
   name: string
-  section: SectionRect
+  section: ColumnSection
+  /** rótulo da seção: "25x60", "ø40", "L 50x50 t20/20" */
+  sectionLabel: string
   /** solicitação governante (já com e2 e momentos mínimos) */
   nd: number
   /** momento na direção de bw (gradiente ao longo de bw), kN·m */
@@ -282,8 +344,131 @@ export interface FoundationResultItem {
   name: string
   /** carga vertical de serviço (G+Q), kN */
   nServ: number
-  footing: import('../nbr/nbr6118/foundations').FootingResult
+  kind: 'sapata' | 'bloco'
+  /** presente quando kind = 'sapata' */
+  footing: import('../nbr/nbr6118/foundations').FootingResult | null
+  /** presente quando kind = 'bloco' (estacas) */
+  pileCap: import('../nbr/nbr6118/pileCaps').PileCapResult | null
   status: 'ok' | 'atencao' | 'falha'
+}
+
+export interface BeamCrackResult {
+  /** momento na combinação frequente, kN·m */
+  mFreq: number
+  /** tensão na armadura (estádio II), kPa */
+  sigmaS: number
+  /** abertura característica estimada, m */
+  wk: number
+  /** limite por CAA (tab. 13.4), m */
+  wkLimit: number
+  ok: boolean
+}
+
+export interface StairDesignResultItem {
+  regionId: string
+  name: string
+  levelName: string
+  design: import('../nbr/nbr6118/stairs').StairDesignOutput
+  status: 'ok' | 'atencao' | 'falha'
+}
+
+export interface TankDesignResultItem {
+  regionId: string
+  name: string
+  levelName: string
+  design: import('../nbr/nbr6118/tanks').TankDesignOutput
+  status: 'ok' | 'atencao' | 'falha'
+}
+
+// ---------------------------------------------------------------------------
+// incêndio (NBR 14432 + NBR 15200)
+// ---------------------------------------------------------------------------
+
+export interface FireCheckItem {
+  element: string
+  kind: 'viga' | 'laje' | 'pilar'
+  /** dimensão relevante (bw/h/bmin), mm */
+  dim: number
+  dimRequired: number
+  /** distância do eixo da armadura à face, mm */
+  c1: number
+  c1Required: number
+  /** TRF calculado (pilares, método analítico), min */
+  trf?: number
+  ok: boolean
+  notes: string[]
+}
+
+export interface FireCheckResults {
+  enabled: boolean
+  /** TRRF adotado, min */
+  trrf: number
+  /** TRRF sugerido pela NBR 14432 (grupo/altura) */
+  trrfSuggested: number
+  occupancy: string
+  buildingHeight: number
+  items: FireCheckItem[]
+  allOk: boolean
+  notes: string[]
+}
+
+/** verificação de furo em viga — NBR 6118 §13.2.5 */
+export interface BeamOpeningCheckItem {
+  beamId: string
+  beamName: string
+  openingId: string
+  planName: string
+  levelNames: string[]
+  /** posição do centro no eixo, m */
+  x: number
+  width: number
+  height: number
+  yOffset: number
+  label?: string
+  conditions: { id: string; label: string; ok: boolean }[]
+  status: 'dispensada' | 'verificar' | 'inadequada'
+  notes: string[]
+}
+
+/** molas de fundação e recalque por pilar (interação solo-estrutura) */
+export interface SoilSpringItem {
+  columnId: string
+  name: string
+  kind: 'sapata' | 'bloco'
+  /** molas de translação, kN/m */
+  kv: number
+  kh: number
+  /** molas de rotação, kN·m/rad */
+  krx: number
+  kry: number
+  krz: number
+  /** recalque estimado na combinação quase-permanente, m */
+  settlementQP: number
+  notes: string[]
+}
+
+export interface SoilInteractionResults {
+  enabled: boolean
+  items: SoilSpringItem[]
+  /** recalque máximo e distorção angular máxima entre pilares vizinhos */
+  maxSettlement: number
+  maxDistortion: { value: number; pair: string } | null
+  notes: string[]
+}
+
+/** reações características na fundação por pilar (planta de cargas) */
+export interface FoundationLoadRow {
+  columnId: string
+  name: string
+  /** posição em planta, m */
+  x: number
+  y: number
+  /** por caso característico (G, Q, WXP, WXN, WYP, WYN): kN, kN·m */
+  cases: { caseId: CaseId; fx: number; fy: number; fz: number; mx: number; my: number; mz: number }[]
+  /** envoltória de Fz nas combinações ELU, kN */
+  fzEluMax: number
+  /** Fz de serviço (G+Q), kN */
+  fzServ: number
 }
 
 export interface BeamServiceResult {
@@ -299,6 +484,8 @@ export interface BeamServiceResult {
   deltaTotal: number
   limit: number
   ok: boolean
+  /** abertura de fissuras ELS-W (§17.3.3.2), combinação frequente */
+  crack: BeamCrackResult | null
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +519,8 @@ export interface BeamDetailSpan {
 export interface ColumnDetailInfo {
   columnId: string
   name: string
-  section: SectionRect
+  section: ColumnSection
+  sectionLabel: string
   barsN: number
   barsPhi: number
   barPositions: { x: number; y: number }[]
@@ -368,6 +556,16 @@ export interface Quantities {
     total: number
     ratePerM3: number // kg/m³ global
   }
+  /** estimativa de custo (custos unitários das configurações), R$ */
+  cost: {
+    enabled: boolean
+    concrete: number
+    steel: number
+    formwork: number
+    total: number
+    /** custo por m² de laje (área construída estrutural aproximada) */
+    perSlabArea: number | null
+  }
 }
 
 export interface AnalysisResults {
@@ -393,8 +591,17 @@ export interface AnalysisResults {
   slabDesign: SlabDesignResultItem[]
   foundations: FoundationResultItem[]
   beamService: BeamServiceResult[]
+  stairDesign: StairDesignResultItem[]
+  tankDesign: TankDesignResultItem[]
+  fire: FireCheckResults
   detailing: DetailingResults
   quantities: Quantities
+  /** verificação de furos em vigas (§13.2.5) */
+  beamOpenings: BeamOpeningCheckItem[]
+  /** interação solo-estrutura (molas e recalques) */
+  soilInteraction: SoilInteractionResults
+  /** planta de cargas — reações características por pilar */
+  foundationLoads: FoundationLoadRow[]
   /** log de avisos da geração do modelo + análise */
   warnings: string[]
   /** duração da análise, ms */

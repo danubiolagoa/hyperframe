@@ -117,6 +117,110 @@ export function designBeamShear(input: BeamShearInput): BeamShearOutput {
 }
 
 // ---------------------------------------------------------------------------
+// Torção — NBR 6118 §17.5 (seção vazada equivalente, treliça com θ = 45°)
+// ---------------------------------------------------------------------------
+
+export interface BeamTorsionInput {
+  /** momento torçor de cálculo, kN·m (valor absoluto) */
+  td: number
+  /** cortante de cálculo concomitante, kN (p/ interação de biela) */
+  vd: number
+  /** VRd2 do cisalhamento, kN */
+  vrd2: number
+  bw: number
+  h: number
+  /** distância do eixo da barra longitudinal do canto à face, m (c1) */
+  c1: number
+  fck: number // kPa
+  fcd: number // kPa
+  fctd: number // kPa
+  fywd: number // kPa (≤ 435 MPa)
+  fyd: number // kPa
+}
+
+export interface BeamTorsionOutput {
+  td: number
+  he: number
+  ae: number
+  ue: number
+  /** resistência da biela comprimida, kN·m */
+  trd2: number
+  /** estribos de torção (1 ramo): A90/s, m²/m */
+  a90S: number
+  /** armadura longitudinal adicional total (distribuída no perímetro ue), m² */
+  asl: number
+  /** interação Vd/VRd2 + Td/TRd2 (≤ 1) */
+  interaction: number
+  ok: boolean
+  negligible: boolean
+}
+
+/**
+ * §17.5.1.4.1 — parede equivalente: he = A/u, respeitando he ≥ 2·c1 e
+ * he ≤ bw − 2·c1 (fisicamente contida na seção).
+ * §17.5.1.5 — TRd2 = 0,50·αv2·fcd·Ae·he·sen(2θ), θ = 45°.
+ * §17.5.1.6 — estribos: A90/s = Td/(2·Ae·fywd) · longitudinal:
+ * Asl = Td·ue/(2·Ae·fyd).
+ * §17.7.2.2 — interação com cortante: Vd/VRd2 + Td/TRd2 ≤ 1.
+ * Torção de compatibilidade pequena (Td ≤ 5% de TRd2 e ≤ 2 kN·m) é sinalizada
+ * como desprezível (§17.5.1.2 permite desprezar com adaptação plástica).
+ */
+export function designBeamTorsion(input: BeamTorsionInput): BeamTorsionOutput {
+  const { td, vd, vrd2, bw, h, c1, fck, fcd, fyd } = input
+  const fywd = Math.min(input.fywd, 435_000)
+
+  const a = bw * h
+  const u = 2 * (bw + h)
+  let he = a / u
+  he = Math.max(he, 2 * c1)
+  he = Math.min(he, Math.max(bw - 2 * c1, 0.02), bw / 2)
+  const ae = Math.max((bw - he) * (h - he), 1e-6)
+  const ue = 2 * (bw - he + (h - he))
+
+  const alphaV2 = 1 - fck / 1000 / 250
+  const trd2 = 0.5 * alphaV2 * fcd * ae * he // sen(2·45°) = 1
+
+  const negligible = td <= Math.min(0.05 * trd2, 2.0)
+  const tdEff = negligible ? 0 : td
+  const a90S = tdEff / (2 * ae * fywd)
+  const asl = (tdEff * ue) / (2 * ae * fyd)
+  const interaction = (vrd2 > 0 ? vd / vrd2 : 0) + (trd2 > 0 ? td / trd2 : 0)
+
+  return {
+    td,
+    he,
+    ae,
+    ue,
+    trd2,
+    a90S,
+    asl,
+    interaction,
+    ok: negligible ? vd <= vrd2 : interaction <= 1.0001,
+    negligible,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Armadura de pele — NBR 6118 §17.3.5.2.3
+// ---------------------------------------------------------------------------
+
+/**
+ * Vigas com h > 60 cm exigem armadura de pele de 0,10%·Ac,alma POR FACE,
+ * em barras de alta aderência com espaçamento ≤ min(20 cm, d/3).
+ */
+export function skinReinforcement(
+  bw: number,
+  h: number,
+): { required: boolean; asPerFace: number; spec: string } {
+  if (h <= 0.6) return { required: false, asPerFace: 0, spec: '—' }
+  const asPerFace = 0.001 * bw * h
+  const phi = 0.008
+  const aPhi = (Math.PI * phi * phi) / 4
+  const n = Math.max(2, Math.ceil(asPerFace / aPhi))
+  return { required: true, asPerFace, spec: `${n} φ 8 por face` }
+}
+
+// ---------------------------------------------------------------------------
 // Escolha de barras
 // ---------------------------------------------------------------------------
 

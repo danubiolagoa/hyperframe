@@ -142,11 +142,64 @@ export const SOIL_PRESETS: SoilPreset[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Estacas — cargas admissíveis ORIENTATIVAS por tipo/diâmetro (exigem laudo
+// geotécnico e verificação estrutural da estaca — NBR 6122)
+// ---------------------------------------------------------------------------
+
+export interface PilePreset {
+  label: string
+  diameter: number // m
+  capacity: number // kN (carga admissível usual)
+}
+
+export const PILE_PRESETS: PilePreset[] = [
+  { label: 'Broca φ25', diameter: 0.25, capacity: 80 },
+  { label: 'Strauss φ32', diameter: 0.32, capacity: 250 },
+  { label: 'Pré-moldada φ33', diameter: 0.33, capacity: 400 },
+  { label: 'Hélice contínua φ40', diameter: 0.4, capacity: 600 },
+  { label: 'Hélice contínua φ50', diameter: 0.5, capacity: 900 },
+  { label: 'Raiz φ31', diameter: 0.31, capacity: 500 },
+]
+
+// ---------------------------------------------------------------------------
+// NBR 14432 — grupos de ocupação (tab. A.1, seleção usual)
+// ---------------------------------------------------------------------------
+
+export const OCCUPANCY_OPTIONS: { value: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H'; label: string }[] = [
+  { value: 'A', label: 'A — Residencial' },
+  { value: 'B', label: 'B — Serviços de hospedagem (hotéis)' },
+  { value: 'C', label: 'C — Comercial varejista' },
+  { value: 'D', label: 'D — Serviços profissionais (escritórios)' },
+  { value: 'E', label: 'E — Educacional' },
+  { value: 'F', label: 'F — Locais de reunião de público' },
+  { value: 'G', label: 'G — Serviços automotivos (garagens)' },
+  { value: 'H', label: 'H — Serviços de saúde (hospitais)' },
+]
+
+// ---------------------------------------------------------------------------
+// Defaults de escada e reservatório (dimensionamento das regiões)
+// ---------------------------------------------------------------------------
+
+export const STAIR_DEFAULTS = {
+  waist: 0.12, // espessura da laje do lance, m
+  riser: 0.175, // espelho, m
+  tread: 0.27, // piso, m
+  finish: 1.0, // revestimento, kN/m²
+}
+
+export const TANK_DEFAULTS = {
+  waterHeight: 1.5, // lâmina d'água, m
+  wallThickness: 0.15,
+  bottomThickness: 0.15,
+  topThickness: 0.1,
+}
+
+// ---------------------------------------------------------------------------
 // Regiões de carga (escada, reservatório…)
 // ---------------------------------------------------------------------------
 
 export interface RegionPreset {
-  kind: 'escada' | 'reservatorio' | 'generica'
+  kind: 'escada' | 'reservatorio' | 'generica' | 'furo'
   label: string
   g: number
   q: number
@@ -166,4 +219,5 @@ export const REGION_PRESETS: RegionPreset[] = [
     q: 15.0, // água como variável (some nas combinações favoráveis)
   },
   { kind: 'generica', label: 'Carga adicional genérica', g: 2.0, q: 0 },
+  { kind: 'furo', label: 'Furo / abertura na laje (shaft, elevador)', g: 0, q: 0 },
 ]

@@ -10,17 +10,12 @@
 import type { ColumnDetailInfo } from '../analysis/types'
 import type { Drawing, DrawingPrimitive } from './types'
 import { boundsOfPrimitives } from './formwork'
+import { columnSectionInfo, insetRectilinear } from '../model/columnSection'
 
 /** φ em m → rótulo em mm: "5", "12,5" */
 function mmTxt(phi: number): string {
   const mm = Math.round(phi * 1000 * 10) / 10
   return Number.isInteger(mm) ? String(mm) : String(mm).replace('.', ',')
-}
-
-/** metros → rótulo em cm: "25", "12,5" */
-function cmTxt(m: number): string {
-  const c = Math.round(m * 1000) / 10
-  return Number.isInteger(c) ? String(c) : String(c).replace('.', ',')
 }
 
 /** escala das seções e nº de seções por linha */
@@ -38,14 +33,15 @@ export function buildColumnDetailDrawing(details: ColumnDetailInfo[]): Drawing {
 
   // rótulos sob cada seção (calculados antes p/ dimensionar a grade)
   const line2 = (d: ColumnDetailInfo): string =>
-    `${cmTxt(d.section.bw)}×${cmTxt(d.section.h)} cm · ${d.barsN} φ ${mmTxt(d.barsPhi)}`
+    `${d.sectionLabel} cm · ${d.barsN} φ ${mmTxt(d.barsPhi)}`
   const line3 = (d: ColumnDetailInfo): string =>
     `estribo φ${mmTxt(d.stirrupPhi)} c/${Math.round(d.stirrupSpacing * 100)} · traspasse ${Math.round(d.lapLength * 100)}`
 
   // passo da grade: 2,2 m; cresce se houver seção alta ou rótulo largo demais
   // (fonte mono ≈ 0,62·altura por caractere)
-  const maxH = details.reduce((m, d) => Math.max(m, d.section.h), 0.2)
-  const maxW = details.reduce((m, d) => Math.max(m, d.section.bw), 0.2)
+  const infos = new Map(details.map((d) => [d.columnId, columnSectionInfo(d.section)]))
+  const maxH = details.reduce((m, d) => Math.max(m, infos.get(d.columnId)!.bv), 0.2)
+  const maxW = details.reduce((m, d) => Math.max(m, infos.get(d.columnId)!.bu), 0.2)
   const maxChars = details.reduce((m, d) => Math.max(m, line2(d).length, line3(d).length), 0)
   const pitchX = Math.max(2.2, maxW * SC + 0.8, maxChars * 0.12 * 0.62 + 0.3)
   const pitchY = Math.max(2.2, maxH * SC + 1.15)
@@ -53,35 +49,36 @@ export function buildColumnDetailDrawing(details: ColumnDetailInfo[]): Drawing {
   details.forEach((d, i) => {
     const cx = (i % PER_ROW) * pitchX
     const cy = -Math.floor(i / PER_ROW) * pitchY
-    const hw = (d.section.bw * SC) / 2 // meia-largura desenhada
-    const hh = (d.section.h * SC) / 2 // meia-altura desenhada
+    const info = infos.get(d.columnId)!
+    const hh = (info.bv * SC) / 2 // meia-altura desenhada (rótulos)
 
-    // seção (aspecto preenchido no SVG; contorno no DXF)
-    prims.push({
-      kind: 'polyline',
-      points: [
-        { x: cx - hw, y: cy - hh },
-        { x: cx + hw, y: cy - hh },
-        { x: cx + hw, y: cy + hh },
-        { x: cx - hw, y: cy + hh },
-      ],
-      closed: true,
-      layer: 'PILARES',
-    })
-
-    // estribo: retângulo recuado do cobrimento (~2,5 cm reais)
-    const ins = 0.025 * SC
-    prims.push({
-      kind: 'polyline',
-      points: [
-        { x: cx - hw + ins, y: cy - hh + ins },
-        { x: cx + hw - ins, y: cy - hh + ins },
-        { x: cx + hw - ins, y: cy + hh - ins },
-        { x: cx - hw + ins, y: cy + hh - ins },
-      ],
-      closed: true,
-      layer: 'ESTRIBOS',
-    })
+    // seção + estribo (recuado ~2,5 cm reais), conforme a forma
+    if (info.kind === 'circle') {
+      prims.push({ kind: 'circle', cx, cy, r: (info.bu / 2) * SC, layer: 'PILARES' })
+      prims.push({
+        kind: 'circle',
+        cx,
+        cy,
+        r: Math.max(info.bu / 2 - 0.025, 0.03) * SC,
+        layer: 'ESTRIBOS',
+      })
+    } else {
+      prims.push({
+        kind: 'polyline',
+        points: info.polygon.map((p) => ({ x: cx + p.x * SC, y: cy + p.y * SC })),
+        closed: true,
+        layer: 'PILARES',
+      })
+      prims.push({
+        kind: 'polyline',
+        points: insetRectilinear(info.polygon, 0.025).map((p) => ({
+          x: cx + p.x * SC,
+          y: cy + p.y * SC,
+        })),
+        closed: true,
+        layer: 'ESTRIBOS',
+      })
+    }
 
     // barras longitudinais nas posições calculadas (u ao longo de bw, v de h)
     for (const p of d.barPositions) {

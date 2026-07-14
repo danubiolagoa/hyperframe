@@ -75,6 +75,15 @@ export default function ControlPanel() {
         <input
           type="checkbox"
           style={checkStyle}
+          checked={d3.showRegions}
+          onChange={(e) => setD3({ showRegions: e.currentTarget.checked })}
+        />
+        Escadas e reservatórios
+      </label>
+      <label style={rowStyle}>
+        <input
+          type="checkbox"
+          style={checkStyle}
           checked={d3.isolateActiveLevel}
           onChange={(e) => setD3({ isolateActiveLevel: e.currentTarget.checked })}
         />

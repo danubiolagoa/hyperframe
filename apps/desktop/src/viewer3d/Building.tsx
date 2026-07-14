@@ -5,14 +5,27 @@ import type { ThreeEvent } from '@react-three/fiber'
 import type { ElementRef } from '@hyperframe/engine'
 import { useStore } from '../store'
 import { NO_RAYCAST } from './coords'
-import { buildBoxes, buildSlabs, type SlabInstance } from './buildGeometry'
+import {
+  buildBoxes,
+  buildRegionSolids,
+  buildSlabs,
+  type BoxInstance,
+  type SlabInstance,
+} from './buildGeometry'
 
-type SolidKind = 'column' | 'beam' | 'slab'
+type SolidKind = 'column' | 'beam' | 'slab' | 'loadRegion'
 
 const BASE_COLOR: Record<SolidKind, string> = {
   column: '#9aa2b1',
   beam: '#8d95a6',
   slab: '#6f7889',
+  loadRegion: '#a09884',
+}
+
+/** cor por tipo de região (escada = concreto claro; reservatório = azulado) */
+const REGION_COLOR: Record<'escada' | 'reservatorio', string> = {
+  escada: '#a09884',
+  reservatorio: '#7f96ad',
 }
 
 function lighten(hex: string, amt = 0.22): string {
@@ -23,6 +36,7 @@ const HOVER_COLOR: Record<SolidKind, string> = {
   column: lighten(BASE_COLOR.column),
   beam: lighten(BASE_COLOR.beam),
   slab: lighten(BASE_COLOR.slab),
+  loadRegion: lighten(BASE_COLOR.loadRegion),
 }
 
 const SEL_COLOR = '#4da3ff' // var(--sel)
@@ -61,8 +75,10 @@ export default function Building() {
   const select = useStore((s) => s.select)
   const setHover = useStore((s) => s.setHover)
 
+  const showRegions = useStore((s) => s.d3.showRegions)
   const boxes = useMemo(() => buildBoxes(project), [project])
   const slabs = useMemo(() => buildSlabs(project), [project])
+  const regionSolids = useMemo(() => buildRegionSolids(project), [project])
   const activeIdx = useMemo(
     () => project.levels.findIndex((l) => l.id === activeLevelId),
     [project, activeLevelId],
@@ -93,6 +109,21 @@ export default function Building() {
         const solid = !faded && !ghostAll
         const opacity = faded ? 0.07 : ghostAll ? 0.15 : 1
         const paint = paintFor(b.kind, b.id, selection, hoverRef)
+        if (b.prism) {
+          return (
+            <PrismMesh
+              key={b.key}
+              box={b}
+              paint={paint}
+              opacity={opacity}
+              solid={solid}
+              faded={faded}
+              onClick={faded ? undefined : handleClick(b.kind, b.id)}
+              onPointerOver={faded ? undefined : handleOver(b.kind, b.id)}
+              onPointerOut={faded ? undefined : handleOut(b.kind, b.id)}
+            />
+          )
+        }
         return (
           <mesh
             key={b.key}
@@ -106,7 +137,11 @@ export default function Building() {
             onPointerOver={faded ? undefined : handleOver(b.kind, b.id)}
             onPointerOut={faded ? undefined : handleOut(b.kind, b.id)}
           >
-            <boxGeometry args={b.size} />
+            {b.round ? (
+              <cylinderGeometry args={[b.round.d / 2, b.round.d / 2, b.size[1], 24]} />
+            ) : (
+              <boxGeometry args={b.size} />
+            )}
             <meshStandardMaterial
               color={paint.color}
               roughness={0.9}
@@ -117,10 +152,49 @@ export default function Building() {
               emissive={paint.emissive}
               emissiveIntensity={paint.emissiveIntensity}
             />
-            {solid && <Edges threshold={20} color={EDGE_COLOR} />}
+            {solid && !b.round && <Edges threshold={20} color={EDGE_COLOR} />}
           </mesh>
         )
       })}
+
+      {showRegions &&
+        regionSolids.map((r) => {
+          const faded = isolate && !r.levels.includes(activeIdx)
+          const solid = !faded && !ghostAll
+          const opacity = faded ? 0.07 : ghostAll ? 0.15 : 1
+          const selected =
+            selection?.kind === 'loadRegion' && selection.id === r.id
+          const hovered = hoverRef?.kind === 'loadRegion' && hoverRef.id === r.id
+          const base = REGION_COLOR[r.regionKind]
+          const color = selected ? SEL_COLOR : hovered ? lighten(base) : base
+          return (
+            <mesh
+              key={r.key}
+              position={r.position}
+              rotation={[0, r.rotationY, r.rotationZ]}
+              castShadow={solid}
+              receiveShadow
+              userData={{ kind: 'loadRegion', id: r.id }}
+              raycast={faded ? NO_RAYCAST : DEFAULT_RAYCAST}
+              onClick={faded ? undefined : handleClick('loadRegion', r.id)}
+              onPointerOver={faded ? undefined : handleOver('loadRegion', r.id)}
+              onPointerOut={faded ? undefined : handleOut('loadRegion', r.id)}
+            >
+              <boxGeometry args={r.size} />
+              <meshStandardMaterial
+                color={color}
+                roughness={0.9}
+                metalness={0.05}
+                transparent={!solid}
+                opacity={opacity}
+                depthWrite={solid}
+                emissive={selected ? SEL_COLOR : '#000000'}
+                emissiveIntensity={selected ? 0.35 : 0}
+              />
+              {solid && <Edges threshold={20} color={EDGE_COLOR} />}
+            </mesh>
+          )
+        })}
 
       {showSlabs &&
         slabs.map((s) => {
@@ -148,6 +222,66 @@ export default function Building() {
 
 // ---------------------------------------------------------------------------
 
+interface PrismMeshProps {
+  box: BoxInstance
+  paint: Paint
+  opacity: number
+  solid: boolean
+  faded: boolean
+  onClick?: (e: ThreeEvent<MouseEvent>) => void
+  onPointerOver?: (e: ThreeEvent<PointerEvent>) => void
+  onPointerOut?: (e: ThreeEvent<PointerEvent>) => void
+}
+
+/** pilar de seção em L: extrusão vertical do contorno em planta */
+function PrismMesh({
+  box,
+  paint,
+  opacity,
+  solid,
+  faded,
+  onClick,
+  onPointerOver,
+  onPointerOut,
+}: PrismMeshProps) {
+  const zBot = box.position[1] - box.size[1] / 2
+  const geometry = useMemo(() => {
+    const shape = new THREE.Shape()
+    const poly = box.prism!.polygon
+    poly.forEach((p, i) => (i === 0 ? shape.moveTo(p.x, p.y) : shape.lineTo(p.x, p.y)))
+    shape.closePath()
+    return new THREE.ExtrudeGeometry(shape, { depth: box.size[1], bevelEnabled: false })
+  }, [box.prism, box.size])
+  useEffect(() => () => geometry.dispose(), [geometry])
+
+  return (
+    <mesh
+      geometry={geometry}
+      rotation-x={-Math.PI / 2}
+      position={[0, zBot, 0]}
+      castShadow={solid}
+      receiveShadow
+      userData={{ kind: box.kind, id: box.id }}
+      raycast={faded ? NO_RAYCAST : DEFAULT_RAYCAST}
+      onClick={onClick}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+    >
+      <meshStandardMaterial
+        color={paint.color}
+        roughness={0.9}
+        metalness={0.05}
+        transparent={!solid}
+        opacity={opacity}
+        depthWrite={solid}
+        emissive={paint.emissive}
+        emissiveIntensity={paint.emissiveIntensity}
+      />
+      {solid && <Edges threshold={20} color={EDGE_COLOR} />}
+    </mesh>
+  )
+}
+
 interface SlabMeshProps {
   slab: SlabInstance
   paint: Paint
@@ -172,13 +306,19 @@ function SlabMesh({
   // Shape em (x, y) da planta; extrusão em +z (espessura). rotation.x = -π/2
   // leva (x, y, z) → (x, z, -y): y da planta vira -z do three e a extrusão
   // vira altura. Topo da laje na cota do nível (−1,5 mm p/ evitar z-fighting
-  // com o topo de vigas/pilares, coplanares).
+  // com o topo de vigas/pilares, coplanares). Furos/aberturas viram holes.
   const geometry = useMemo(() => {
     const shape = new THREE.Shape()
     slab.polygon.forEach((p, i) => (i === 0 ? shape.moveTo(p.x, p.y) : shape.lineTo(p.x, p.y)))
     shape.closePath()
+    for (const hole of slab.holes) {
+      const path = new THREE.Path()
+      hole.forEach((p, i) => (i === 0 ? path.moveTo(p.x, p.y) : path.lineTo(p.x, p.y)))
+      path.closePath()
+      shape.holes.push(path)
+    }
     return new THREE.ExtrudeGeometry(shape, { depth: slab.thickness, bevelEnabled: false })
-  }, [slab.polygon, slab.thickness])
+  }, [slab.polygon, slab.holes, slab.thickness])
   useEffect(() => () => geometry.dispose(), [geometry])
 
   return (

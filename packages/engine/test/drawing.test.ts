@@ -210,6 +210,7 @@ describe('buildColumnDetailDrawing — dados fabricados', () => {
     columnId: 'c1',
     name: 'P99',
     section: { bw: 0.25, h: 0.6 },
+    sectionLabel: '25x60',
     barsN: 6,
     barsPhi: 0.016,
     barPositions: [
@@ -231,7 +232,7 @@ describe('buildColumnDetailDrawing — dados fabricados', () => {
     const d = buildColumnDetailDrawing(five)
     checkDrawing(d)
     const ts = texts(d)
-    expect(ts).toContain('25×60 cm · 6 φ 16')
+    expect(ts).toContain('25x60 cm · 6 φ 16')
     expect(ts).toContain('estribo φ5 c/19 · traspasse 60')
     // 5ª seção quebra p/ a 2ª linha (y menor que a 1ª)
     const rects = d.primitives.filter((p) => p.kind === 'polyline' && p.layer === 'PILARES')

@@ -29,7 +29,9 @@ export interface NumberedSystem {
 /**
  * Numeração de GDL com diafragma rígido: nós escravos têm ux/uy/rz expressos
  * em função do mestre do pavimento (ux_m, uy_m, rz_m) com braços de alavanca.
- * Apoios (base) totalmente engastados. Mestres têm apenas ux, uy, rz.
+ * Apoios: engaste total, ou molas por GDL (interação solo-estrutura — GDL com
+ * mola recebem numeração e rigidez adicional na diagonal). Mestres têm apenas
+ * ux, uy, rz.
  */
 export function numberDofs(model: AnalysisModel): NumberedSystem {
   const masterByLevel = new Map(model.masters.map((m) => [m.levelIndex, m.nodeId]))
@@ -44,7 +46,15 @@ export function numberDofs(model: AnalysisModel): NumberedSystem {
   // primeiro numera os GDL próprios na ordem por pavimento
   const masterDofs = new Map<number, { ux: number; uy: number; rz: number }>()
   for (const node of order) {
-    if (node.support) continue
+    if (node.support) {
+      // apoio elástico: numera os GDL com mola (>0); os demais ficam prescritos
+      if (node.springs) {
+        for (let d = 0; d < 6; d++) {
+          if (node.springs[d] > 0) map[node.id][d] = [{ g: n++, f: 1 }]
+        }
+      }
+      continue
+    }
     if (node.kind === 'master') {
       const ux = n++
       const uy = n++
@@ -114,7 +124,7 @@ export function solvePass(
 
   // pré-computa matrizes por membro
   const memberData = model.members.map((m) => {
-    const { A, Iy, Iz, J } = rectSectionProps(m.section.bw, m.section.h)
+    const { A, Iy, Iz, J } = m.props ?? rectSectionProps(m.section.bw, m.section.h)
     const isBeam = m.ref.kind === 'beam'
     const eBase = pass.useEci ? cp.eci : cp.ecs
     const eFactor = isBeam ? pass.beams : pass.columns
@@ -158,6 +168,15 @@ export function solvePass(
           }
         }
       }
+    }
+  }
+  // molas de apoio (interação solo-estrutura): rigidez na diagonal
+  for (const node of model.nodes) {
+    if (!node.support || !node.springs) continue
+    for (let d = 0; d < 6; d++) {
+      const k = node.springs[d]
+      if (k <= 0) continue
+      for (const t of map[node.id][d]) K.add(t.g, t.g, t.f * t.f * k)
     }
   }
   K.factorize()

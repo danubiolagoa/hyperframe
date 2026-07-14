@@ -45,12 +45,35 @@ export function defaultSettings(p: NewProjectParams): ProjectSettings {
       s3Group: p.wind.s3Group,
     },
     soil: { sigmaAdm: 250, label: 'Argila rija' },
+    soilInteraction: {
+      enabled: false,
+      layers: [
+        { thickness: 3, soil: 'argila-arenosa', nspt: 8, label: 'Argila arenosa média' },
+        { thickness: 5, soil: 'areia', nspt: 20, label: 'Areia medianamente compacta' },
+      ],
+      waterDepth: null,
+      chFactor: 0.5,
+      poisson: 0.3,
+    },
+    costs: { enabled: true, concretePerM3: 750, steelPerKg: 9.5, formworkPerM2: 130 },
+    foundation: {
+      type: 'sapata',
+      pileCapacity: 600,
+      pileDiameter: 0.4,
+      pileSpacingFactor: 3,
+      pileLabel: 'Hélice contínua φ40',
+      pileKind: 'helice',
+      pileLength: 10,
+    },
+    fire: { enabled: true, trrf: 'auto', occupancy: 'A' },
     stiffnessReduction: { beams: 0.4, columns: 0.8 },
     torsionFactor: 0.05,
     considerSelfWeight: true,
     concreteUnitWeight: 25,
     psiLive: { ...PSI_PRESETS.residencial },
     psiWind: { ...PSI_PRESETS.vento },
+    notionalImperfections: true,
+    secondOrderGammaZ: true,
   }
 }
 

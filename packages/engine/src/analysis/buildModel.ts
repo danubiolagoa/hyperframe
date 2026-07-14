@@ -1,4 +1,5 @@
-import type { FloorPlan, Project, Slab, Vec2 } from '../model/types'
+import type { FloorPlan, Project, SectionRect, Slab, Vec2 } from '../model/types'
+import { columnSectionInfo, columnWorldDirs } from '../model/columnSection'
 import {
   TOL,
   bbox,
@@ -11,8 +12,9 @@ import {
   segIntersection,
   sub,
 } from '../geometry/geometry'
-import { overlapArea } from '../geometry/clip'
+import { clipPolygon, overlapArea } from '../geometry/clip'
 import { computeWind } from '../nbr/nbr6123/wind'
+import { notionalLoads, windNotionalRule } from '../nbr/nbr6118/imperfections'
 import type { WindGeometry } from '../nbr/api'
 import type { AMember, ANode, AnalysisModel, CaseId, Vec3 } from './types'
 
@@ -40,8 +42,13 @@ interface Piece {
   b: Vec2
   beamId: string
   beamName: string
-  /** vão de dimensionamento (entre apoios em pilares), por viga */
+  /** vão de dimensionamento (entre apoios em pilares/mudança de seção), por viga */
   spanIndex: number
+  /** seção do trecho (override por segmento ou seção da viga) */
+  section: SectionRect
+  /** posição ao longo do eixo da viga (comprimento acumulado), m */
+  s0: number
+  s1: number
 }
 
 const CASES: CaseId[] = ['G', 'Q', 'WXP', 'WXN', 'WYP', 'WYN']
@@ -107,11 +114,15 @@ export function buildAnalysisModel(project: Project): {
     const pieces: Piece[] = []
     for (const beam of plan.beams) {
       let spanIndex = 0
+      let sAcc = 0 // comprimento acumulado ao longo da polilinha
+      const sectionOfSeg = (si: number): SectionRect =>
+        beam.segmentSections?.[si] ?? beam.section
       for (let si = 0; si + 1 < beam.path.length; si++) {
         const a = beam.path[si]
         const b = beam.path[si + 1]
         const L = dist(a, b)
         if (L < TOL) continue
+        const section = sectionOfSeg(si)
         const cuts = new Set<number>([0, 1])
         // interseções com os demais segmentos
         for (const seg of rawSegs) {
@@ -134,12 +145,26 @@ export function buildAnalysisModel(project: Project): {
           if ((t1 - t0) * L < TOL) continue
           const pa = { x: a.x + (b.x - a.x) * t0, y: a.y + (b.y - a.y) * t0 }
           const pb = { x: a.x + (b.x - a.x) * t1, y: a.y + (b.y - a.y) * t1 }
-          pieces.push({ a: pa, b: pb, beamId: beam.id, beamName: beam.name, spanIndex })
-          // novo vão de dimensionamento quando o pedaço termina num pilar
-          const endsOnColumn = colPoints.some((cp) => dist(cp, pb) <= TOL * 2)
+          pieces.push({
+            a: pa,
+            b: pb,
+            beamId: beam.id,
+            beamName: beam.name,
+            spanIndex,
+            section,
+            s0: sAcc + t0 * L,
+            s1: sAcc + t1 * L,
+          })
           const isLastPiece = k + 2 === ts.length && si + 2 === beam.path.length
-          if (endsOnColumn && !isLastPiece) spanIndex++
+          // novo vão de dimensionamento: apoio em pilar ou mudança de seção
+          const endsOnColumn = colPoints.some((cp) => dist(cp, pb) <= TOL * 2)
+          const isSegEnd = k + 2 === ts.length
+          const nextSection = si + 2 < beam.path.length ? sectionOfSeg(si + 1) : section
+          const sectionChanges =
+            isSegEnd && (nextSection.bw !== section.bw || nextSection.h !== section.h)
+          if ((endsOnColumn || sectionChanges) && !isLastPiece) spanIndex++
         }
+        sAcc += L
       }
     }
     piecesByLevel.set(li, pieces)
@@ -147,6 +172,8 @@ export function buildAnalysisModel(project: Project): {
 
   // ---------------------------------------------------------------- membros
   const members: AMember[] = []
+  /** arco [s0,s1] do membro ao longo da viga de origem (cargas parciais) */
+  const memberArc = new Map<number, { s0: number; s1: number }>()
   const addMember = (
     ni: number,
     nj: number,
@@ -155,11 +182,23 @@ export function buildAnalysisModel(project: Project): {
     xL: Vec3,
     yL: Vec3,
     zL: Vec3,
+    props?: AMember['props'],
   ) => {
     const a = nodes[ni]
     const b = nodes[nj]
     const length = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)
-    const m: AMember = { id: members.length, ni, nj, ref, section, length, xLocal: xL, yLocal: yL, zLocal: zL }
+    const m: AMember = {
+      id: members.length,
+      ni,
+      nj,
+      ref,
+      section,
+      props,
+      length,
+      xLocal: xL,
+      yLocal: yL,
+      zLocal: zL,
+    }
     members.push(m)
     return m
   }
@@ -176,12 +215,29 @@ export function buildAnalysisModel(project: Project): {
     if (iBase === 0) {
       nodes[baseNode].support = true
     } else {
-      warnings.push(`Pilar ${col.name} nasce no nível ${levels[iBase].name} (sem apoio direto).`)
+      // nasce em viga? (transferência) — o nó da base coincide com um corte da viga
+      const onBeam = (piecesByLevel.get(iBase) ?? []).some(
+        (pc) => dist(pc.a, col.pos) <= TOL * 2 || dist(pc.b, col.pos) <= TOL * 2,
+      )
+      warnings.push(
+        onBeam
+          ? `Pilar ${col.name} nasce em viga no nível ${levels[iBase].name} (transferência) — verifique a flecha e a viga de apoio.`
+          : `Pilar ${col.name} nasce no nível ${levels[iBase].name} SEM apoio (nem fundação, nem viga) — modelo instável.`,
+      )
     }
+    const secInfo = columnSectionInfo(col.section)
+    const dirs = columnWorldDirs(col.rotationDeg)
     // eixos locais: x p/ cima; y local = direção da dimensão h da seção
-    const yL: Vec3 = col.rotationDeg === 0 ? [1, 0, 0] : [0, 1, 0]
     const xL: Vec3 = [0, 0, 1]
-    const zL: Vec3 = col.rotationDeg === 0 ? [0, 1, 0] : [-1, 0, 0]
+    const yL: Vec3 = [dirs.vDir.x, dirs.vDir.y, 0]
+    const zL: Vec3 = [dirs.uDir.x, dirs.uDir.y, 0]
+    const props: AMember['props'] = {
+      A: secInfo.A,
+      Iy: secInfo.Iu,
+      Iz: secInfo.Iv,
+      J: secInfo.J,
+      perimeter: secInfo.perimeter,
+    }
     for (let i = iBase; i < iTop; i++) {
       const ni = getNode(i, col.pos)
       const nj = getNode(i + 1, col.pos)
@@ -189,19 +245,16 @@ export function buildAnalysisModel(project: Project): {
         ni,
         nj,
         { kind: 'column', sourceId: col.id, sourceName: col.name, spanIndex: i - iBase },
-        col.section,
+        { bw: secInfo.bu, h: secInfo.bv },
         xL,
         yL,
         zL,
+        props,
       )
     }
   }
 
-  // vigas: uma barra por pedaço
-  const beamSectionById = new Map<string, { bw: number; h: number }>()
-  for (const plan of project.plans) {
-    for (const b of plan.beams) beamSectionById.set(b.id, b.section)
-  }
+  // vigas: uma barra por pedaço (seção do trecho)
   for (const [li, pieces] of piecesByLevel) {
     for (const pc of pieces) {
       const ni = getNode(li, pc.a)
@@ -212,15 +265,16 @@ export function buildAnalysisModel(project: Project): {
       const xL: Vec3 = [dx / L, dy / L, 0]
       const yL: Vec3 = [0, 0, 1]
       const zL: Vec3 = [dy / L, -dx / L, 0]
-      addMember(
+      const m = addMember(
         ni,
         nj,
         { kind: 'beam', sourceId: pc.beamId, sourceName: pc.beamName, spanIndex: pc.spanIndex },
-        beamSectionById.get(pc.beamId) ?? { bw: 0.2, h: 0.5 },
+        pc.section,
         xL,
         yL,
         zL,
       )
+      memberArc.set(m.id, { s0: pc.s0, s1: pc.s1 })
     }
   }
 
@@ -262,7 +316,7 @@ export function buildAnalysisModel(project: Project): {
   // peso próprio
   if (project.settings.considerSelfWeight) {
     for (const m of members) {
-      const A = m.section.bw * m.section.h
+      const A = m.props?.A ?? m.section.bw * m.section.h
       const w = A * γ
       if (m.ref.kind === 'column') {
         memberLoads.G[m.id].wx -= w // x local aponta p/ cima
@@ -290,7 +344,7 @@ export function buildAnalysisModel(project: Project): {
     byBeam.set(m.ref.sourceId, list)
   }
 
-  // alvenaria (cargas de linha permanentes) — cobre toda a viga
+  // alvenaria (cargas de linha permanentes) — viga inteira ou trecho [x0, x1]
   for (let li = 1; li < levels.length; li++) {
     const level = levels[li]
     if (!level.planId) continue
@@ -301,9 +355,25 @@ export function buildAnalysisModel(project: Project): {
     for (const wl of plan.wallLoads) {
       const memberIds = byBeam.get(wl.beamId)
       if (!memberIds) continue
+      const x0 = wl.x0 ?? -Infinity
+      const x1 = wl.x1 ?? Infinity
+      let applied = 0
       for (const mid of memberIds) {
-        memberLoads.G[mid].wy -= wl.w
-        levelG[li] += wl.w * members[mid].length
+        const arc = memberArc.get(mid)
+        const s0 = arc?.s0 ?? 0
+        const s1 = arc?.s1 ?? members[mid].length
+        const ov = Math.min(s1, x1) - Math.max(s0, x0)
+        if (ov <= TOL) continue
+        // carga uniforme equivalente no pedaço, conservando a força total
+        const frac = Math.min(ov / (s1 - s0), 1)
+        memberLoads.G[mid].wy -= wl.w * frac
+        levelG[li] += wl.w * ov
+        applied += ov
+      }
+      if (wl.x0 !== undefined && wl.x1 !== undefined && applied < (x1 - x0) * 0.5) {
+        warnings.push(
+          `Carga de parede em ${plan.beams.find((b) => b.id === wl.beamId)?.name ?? '?'} (${level.name}): trecho ${wl.x0.toFixed(2)}–${wl.x1.toFixed(2)} m cobre pouco da viga — confira as posições.`,
+        )
       }
     }
   }
@@ -337,13 +407,34 @@ export function buildAnalysisModel(project: Project): {
       const area = polygonArea(slab.polygon)
       if (area < 1e-6) continue
       const extras = slabExtraLoads(plan, slab)
-      const gArea = slab.thickness * γ + slab.finishLoad + extras.g // kN/m²
-      const qArea = slab.liveLoad + extras.q
+      // furos (e escadas com abertura) removem a laje na área de interseção:
+      // peso próprio/revestimento/sobrecarga só atuam na área líquida; as
+      // cargas de região (extras) permanecem íntegras (vão p/ o contorno)
+      const openArea = Math.min(slabOpeningsArea(plan, slab), area)
+      const netFactor = (area - openArea) / area
+      if (openArea > 0.5 * area) {
+        warnings.push(
+          `Laje ${slab.name} (${level.name}): furos cobrem ${Math.round(
+            (100 * openArea) / area,
+          )}% da área — verifique o modelo.`,
+        )
+      }
+      const gArea = (slab.thickness * γ + slab.finishLoad) * netFactor + extras.g // kN/m²
+      const qArea = slab.liveLoad * netFactor + extras.q
       levelG[li] += gArea * area
       levelQ[li] += qArea * area
 
       const edgeShares = tributaryAreas(slab.polygon)
       const n = slab.polygon.length
+      // 1º passe: identifica bordas apoiadas e acumula quinhões de bordas livres
+      interface EdgeSupport {
+        aTrib: number
+        onEdge: number[]
+        covered: number
+        edgeLen: number
+      }
+      const supported: EdgeSupport[] = []
+      let freeTrib = 0
       for (let e = 0; e < n; e++) {
         const pa = slab.polygon[e]
         const pb = slab.polygon[(e + 1) % n]
@@ -367,20 +458,10 @@ export function buildAnalysisModel(project: Project): {
           }
         }
         if (onEdge.length === 0) {
-          warnings.push(
-            `Laje ${slab.name} (${level.name}): borda sem viga de apoio — quinhão de ${(
-              aTrib * gArea
-            ).toFixed(1)} kN não aplicado.`,
-          )
+          freeTrib += aTrib
           continue
         }
-        // carga de linha equivalente conservando a força total do quinhão
-        const wLineG = (aTrib * gArea) / covered
-        const wLineQ = (aTrib * qArea) / covered
-        for (const mid of onEdge) {
-          memberLoads.G[mid].wy -= wLineG
-          memberLoads.Q[mid].wy -= wLineQ
-        }
+        supported.push({ aTrib, onEdge, covered, edgeLen })
         if (covered < edgeLen - 10 * TOL) {
           warnings.push(
             `Laje ${slab.name} (${level.name}): borda parcialmente apoiada (${covered.toFixed(
@@ -389,11 +470,39 @@ export function buildAnalysisModel(project: Project): {
           )
         }
       }
+      // 2º passe: aplica quinhões; bordas livres redistribuem às apoiadas
+      const tribSupported = supported.reduce((s, ed) => s + ed.aTrib, 0)
+      if (freeTrib > 1e-9) {
+        if (tribSupported > 1e-9) {
+          warnings.push(
+            `Laje ${slab.name} (${level.name}): borda(s) livre(s) — quinhão de ${(
+              freeTrib * gArea
+            ).toFixed(1)} kN redistribuído às bordas apoiadas.`,
+          )
+        } else {
+          warnings.push(
+            `Laje ${slab.name} (${level.name}): NENHUMA borda apoiada — carga de ${(
+              (freeTrib + tribSupported) * gArea
+            ).toFixed(1)} kN não aplicada.`,
+          )
+        }
+      }
+      for (const ed of supported) {
+        // quinhão próprio + parcela redistribuída (proporcional ao quinhão)
+        const share = tribSupported > 1e-9 ? ed.aTrib * (1 + freeTrib / tribSupported) : ed.aTrib
+        const wLineG = (share * gArea) / ed.covered
+        const wLineQ = (share * qArea) / ed.covered
+        for (const mid of ed.onEdge) {
+          memberLoads.G[mid].wy -= wLineG
+          memberLoads.Q[mid].wy -= wLineQ
+        }
+      }
     }
   }
 
   // ------------------------------------------------------------------ vento
   let wind: AnalysisModel['wind'] = null
+  let imperfections: AnalysisModel['imperfections'] = null
   if (project.settings.wind.enabled) {
     const pts: Vec2[] = [
       ...project.columns.map((c) => c.pos),
@@ -425,6 +534,45 @@ export function buildAnalysisModel(project: Project): {
         })
       }
       wind = computeWind(project.settings.wind, { lx, ly, totalHeight, levels: geoLevels })
+
+      // desaprumo global (NBR 6118 §11.3.3.4.1) — composto ao vento pela regra
+      // da norma (compara momentos de tombamento na base; mesma direção/sentido)
+      if (project.settings.notionalImperfections) {
+        const weights = geoLevels.map((gl) => ({
+          levelIndex: gl.levelIndex,
+          z: gl.z,
+          weight: levelG[gl.levelIndex] + levelQ[gl.levelIndex],
+        }))
+        const notional = notionalLoads(totalHeight, project.columns.length, weights)
+        const rules: NonNullable<AnalysisModel['imperfections']>['rules'] = []
+        for (const wd of wind) {
+          const mWind = wd.perLevel.reduce((s, lf) => s + lf.F * lf.z, 0)
+          const rule = windNotionalRule(mWind, notional.baseMoment)
+          rules.push({ dir: wd.dir, rule, mWind })
+          if (rule === 'somente-vento') continue
+          const fOf = new Map(notional.perLevel.map((l) => [l.levelIndex, l.F]))
+          for (const lf of wd.perLevel) {
+            const fn = fOf.get(lf.levelIndex) ?? 0
+            lf.F = rule === 'somente-desaprumo' ? fn : lf.F + fn
+          }
+          wd.totalForce = wd.perLevel.reduce((s, lf) => s + lf.F, 0)
+        }
+        imperfections = {
+          theta1: notional.theta1,
+          thetaA: notional.thetaA,
+          baseMoment: notional.baseMoment,
+          rules,
+        }
+        const composed = rules.filter((r) => r.rule !== 'somente-vento')
+        if (composed.length > 0) {
+          warnings.push(
+            `Desaprumo global (θa = 1/${Math.round(1 / notional.thetaA)}) incluído nas ações laterais: ${composed
+              .map((r) => `${r.dir} (${r.rule})`)
+              .join(', ')}.`,
+          )
+        }
+      }
+
       // aplica nos nós mestres (ou distribui nos nós do nível, com aviso)
       for (const wd of wind) {
         const caseId: CaseId = `W${wd.dir}` as CaseId
@@ -454,6 +602,10 @@ export function buildAnalysisModel(project: Project): {
     } else {
       warnings.push('Vento habilitado, mas o modelo não tem geometria em planta suficiente.')
     }
+  } else if (project.settings.notionalImperfections) {
+    warnings.push(
+      'Desaprumo global não aplicado: habilite o vento para gerar os casos de ação lateral.',
+    )
   }
 
   const levelWeights = levels
@@ -467,11 +619,42 @@ export function buildAnalysisModel(project: Project): {
     members,
     masters,
     wind,
+    imperfections,
     levelWeights,
     warnings,
     stats: { nodes: nodes.length, members: members.length, dofs: 0 },
   }
   return { model, internal: { memberLoads, nodalLoads } }
+}
+
+/** o furo vale p/ esta laje? (kind 'furo' sempre; escada conforme opening) */
+export function regionOpensSlab(region: FloorPlan['loadRegions'][number]): boolean {
+  if (region.kind === 'furo') return true
+  if (region.kind === 'escada') return region.stair?.opening ?? true
+  return false
+}
+
+/** área de furos/aberturas sobre a laje (interseção), m² */
+export function slabOpeningsArea(plan: FloorPlan, slab: Slab): number {
+  const clip = convexClipOf(slab)
+  let a = 0
+  for (const region of plan.loadRegions ?? []) {
+    if (!regionOpensSlab(region)) continue
+    a += overlapArea(region.polygon, clip)
+  }
+  return a
+}
+
+/** polígonos de furo recortados pela laje (p/ visualização/desenho) */
+export function slabOpeningPolygons(plan: FloorPlan, slab: Slab): Vec2[][] {
+  const clip = convexClipOf(slab)
+  const out: Vec2[][] = []
+  for (const region of plan.loadRegions ?? []) {
+    if (!regionOpensSlab(region)) continue
+    const cut = clipPolygon(region.polygon, clip)
+    if (cut.length >= 3 && polygonArea(cut) > 1e-4) out.push(cut)
+  }
+  return out
 }
 
 /** polígono de recorte convexo da laje (a própria, se convexa; senão o bbox) */

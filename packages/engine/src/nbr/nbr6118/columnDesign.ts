@@ -1,10 +1,12 @@
 import type { Vec2 } from '../../model/types'
 import { clipHalfPlane, areaCentroid } from '../../geometry/clip'
 import { pointInPolygon } from '../../geometry/geometry'
+import { insetRectilinear } from '../../model/columnSection'
 
 /**
- * Dimensionamento de pilares retangulares a flexo-compressão oblíqua —
- * NBR 6118 §17.2 (domínios) e §15.8 (esbeltez, pilar-padrão).
+ * Dimensionamento de pilares (retangulares, circulares e em L) a
+ * flexo-compressão oblíqua — NBR 6118 §17.2 (domínios) e §15.8 (esbeltez,
+ * pilar-padrão).
  *
  * Método: integração da seção com bloco retangular de tensões (0,85·fcd,
  * profundidade 0,8x) e barras discretas. Para cada arranjo candidato, a curva
@@ -14,15 +16,44 @@ import { pointInPolygon } from '../../geometry/geometry'
  *
  * Eixos da seção: u ao longo de bw, v ao longo de h (origem no centroide).
  * Mu = ∫σ·u dA (gradiente ao longo de bw) · Mv = ∫σ·v dA (ao longo de h).
+ * Seções não retangulares entram pelo `polygon` (contorno no centróide);
+ * círculos usam polígono de 48 lados (erro de área < 0,3%, a favor da
+ * segurança).
  */
 
 export interface ColumnSectionDef {
+  /** caixa envolvente: bw ao longo de u, h ao longo de v, m */
   bw: number
   h: number
   cover: number // ao estribo, m
   fcd: number // kPa
   fyd: number // kPa
   es: number // kPa
+  /** forma da seção (default 'rect') */
+  shape?: 'rect' | 'circle' | 'L'
+  /** contorno (u,v) centrado no centróide — default: retângulo bw×h */
+  polygon?: Vec2[]
+  /** área real da seção, m² (default bw·h) */
+  ac?: number
+  /** menor espessura (limita espaçamento do estribo), m (default min(bw,h)) */
+  minDim?: number
+}
+
+/** contorno efetivo da seção */
+function outlineOf(sec: ColumnSectionDef): Vec2[] {
+  return (
+    sec.polygon ?? [
+      { x: -sec.bw / 2, y: -sec.h / 2 },
+      { x: sec.bw / 2, y: -sec.h / 2 },
+      { x: sec.bw / 2, y: sec.h / 2 },
+      { x: -sec.bw / 2, y: sec.h / 2 },
+    ]
+  )
+}
+
+/** área efetiva da seção */
+function areaOf(sec: ColumnSectionDef): number {
+  return sec.ac ?? sec.bw * sec.h
 }
 
 export interface BarArrangement {
@@ -48,8 +79,101 @@ const ALPHA_C = 0.85
 const LAMBDA_BLOCK = 0.8
 const STIRRUP_PHI = 0.0063
 
+/** espaçamento livre mínimo entre barras: max(20 mm, φ, 1,2·d_agregado≈23 mm) */
+function minClearOf(phi: number): number {
+  return Math.max(0.02, phi, 0.023)
+}
+
+/** verifica espaçamento livre mínimo entre todas as barras */
+function clearanceOk(pos: Vec2[], phi: number): boolean {
+  const minClear = minClearOf(phi)
+  for (let i = 0; i < pos.length; i++) {
+    for (let j = i + 1; j < pos.length; j++) {
+      const d = Math.hypot(pos[i].x - pos[j].x, pos[i].y - pos[j].y)
+      if (d < minClear + phi) return false
+    }
+  }
+  return true
+}
+
+/** n barras em anel (seção circular) — mínimo 6 (§18.4.2.1) */
+function placeBarsCircle(sec: ColumnSectionDef, n: number, phi: number): Vec2[] | null {
+  if (n < 6) return null
+  const rb = sec.bw / 2 - sec.cover - STIRRUP_PHI - phi / 2
+  if (rb <= 0.02) return null
+  const pos: Vec2[] = []
+  for (let k = 0; k < n; k++) {
+    const a = Math.PI / 2 + (2 * Math.PI * k) / n
+    pos.push({ x: rb * Math.cos(a), y: rb * Math.sin(a) })
+  }
+  return clearanceOk(pos, phi) ? pos : null
+}
+
+/**
+ * n barras no contorno recuado de seção retilínea (L): uma barra em cada
+ * vértice (§18.4.2.1) e as demais nos maiores vãos do perímetro.
+ */
+function placeBarsPolygon(sec: ColumnSectionDef, n: number, phi: number): Vec2[] | null {
+  const outline = sec.polygon
+  if (!outline || n < outline.length) return null
+  const inset = insetRectilinear(outline, sec.cover + STIRRUP_PHI + phi / 2)
+  // extensões degeneradas (aba mais fina que 2·(cobrimento+estribo+φ/2))
+  for (let i = 0; i < inset.length; i++) {
+    const p = inset[i]
+    const q = inset[(i + 1) % inset.length]
+    if (Math.hypot(q.x - p.x, q.y - p.y) < 0.005) return null
+  }
+  // posições por comprimento de arco: vértices primeiro, extras nos maiores vãos
+  const sVerts: number[] = []
+  let per = 0
+  for (let i = 0; i < inset.length; i++) {
+    sVerts.push(per)
+    const q = inset[(i + 1) % inset.length]
+    per += Math.hypot(q.x - inset[i].x, q.y - inset[i].y)
+  }
+  const sAll = [...sVerts].sort((a, b) => a - b)
+  let extra = n - inset.length
+  while (extra > 0) {
+    // maior vão entre posições consecutivas (fechando o anel)
+    let bestGap = -1
+    let bestAt = 0
+    for (let i = 0; i < sAll.length; i++) {
+      const s0 = sAll[i]
+      const s1 = i + 1 < sAll.length ? sAll[i + 1] : sAll[0] + per
+      if (s1 - s0 > bestGap) {
+        bestGap = s1 - s0
+        bestAt = i
+      }
+    }
+    const s0 = sAll[bestAt]
+    const s1 = bestAt + 1 < sAll.length ? sAll[bestAt + 1] : sAll[0] + per
+    sAll.push(((s0 + s1) / 2) % per)
+    sAll.sort((a, b) => a - b)
+    extra--
+  }
+  // arco → ponto
+  const pointAt = (s: number): Vec2 => {
+    let acc = 0
+    for (let i = 0; i < inset.length; i++) {
+      const p = inset[i]
+      const q = inset[(i + 1) % inset.length]
+      const l = Math.hypot(q.x - p.x, q.y - p.y)
+      if (s <= acc + l + 1e-9) {
+        const t = l < 1e-12 ? 0 : (s - acc) / l
+        return { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t }
+      }
+      acc += l
+    }
+    return { ...inset[0] }
+  }
+  const pos = sAll.map(pointAt)
+  return clearanceOk(pos, phi) ? pos : null
+}
+
 /** distribui n barras no perímetro (cantos + faces, proporcional aos lados) */
 export function placeBars(sec: ColumnSectionDef, n: number, phi: number): Vec2[] | null {
+  if (sec.shape === 'circle') return placeBarsCircle(sec, n, phi)
+  if (sec.shape === 'L') return placeBarsPolygon(sec, n, phi)
   if (n < 4 || n % 2 !== 0) return null
   const du = sec.bw / 2 - sec.cover - STIRRUP_PHI - phi / 2
   const dv = sec.h / 2 - sec.cover - STIRRUP_PHI - phi / 2
@@ -80,15 +204,7 @@ export function placeBars(sec: ColumnSectionDef, n: number, phi: number): Vec2[]
     const u = -du + (2 * du * i) / (nFaceU + 1)
     pos.push({ x: u, y: -dv }, { x: u, y: dv })
   }
-  // espaçamento livre mínimo: max(20 mm, φ, 1,2·d_agregado≈23 mm)
-  const minClear = Math.max(0.02, phi, 0.023)
-  for (let i = 0; i < pos.length; i++) {
-    for (let j = i + 1; j < pos.length; j++) {
-      const d = Math.hypot(pos[i].x - pos[j].x, pos[i].y - pos[j].y)
-      if (d < minClear + phi) return null
-    }
-  }
-  return pos
+  return clearanceOk(pos, phi) ? pos : null
 }
 
 interface SectionState {
@@ -105,15 +221,10 @@ function sectionForces(
   x: number,
 ): SectionState {
   const w = { x: Math.cos(beta), y: Math.sin(beta) } // direção de compressão crescente
-  const rect: Vec2[] = [
-    { x: -sec.bw / 2, y: -sec.h / 2 },
-    { x: sec.bw / 2, y: -sec.h / 2 },
-    { x: sec.bw / 2, y: sec.h / 2 },
-    { x: -sec.bw / 2, y: sec.h / 2 },
-  ]
+  const outline = outlineOf(sec)
   let sMax = -Infinity
   let sMin = Infinity
-  for (const p of rect) {
+  for (const p of outline) {
     const s = p.x * w.x + p.y * w.y
     if (s > sMax) sMax = s
     if (s < sMin) sMin = s
@@ -141,7 +252,7 @@ function sectionForces(
   const yBlock = LAMBDA_BLOCK * x
   const cBlock = sMax - yBlock
   // região s ≥ cBlock  ⇔  −w·p ≤ −cBlock
-  const comp = clipHalfPlane(rect, { x: -w.x, y: -w.y }, -cBlock)
+  const comp = clipHalfPlane(outline, { x: -w.x, y: -w.y }, -cBlock)
   const { area, cx, cy } = areaCentroid(comp)
   const sigmaC = ALPHA_C * sec.fcd
   let N = sigmaC * area
@@ -165,7 +276,7 @@ function sectionForces(
 /** capacidade máxima de compressão centrada (x → ∞): εc = 2‰ uniforme */
 export function squashLoad(sec: ColumnSectionDef, bars: BarArrangement): number {
   const sigmaS = Math.min(sec.fyd, sec.es * EPS_C2)
-  const ac = sec.bw * sec.h
+  const ac = areaOf(sec)
   return ALPHA_C * sec.fcd * (ac - bars.as) + sigmaS * bars.as
 }
 
@@ -247,6 +358,8 @@ export interface SlendernessInput {
   /** momentos de 1ª ordem nas extremidades (|MA| ≥ |MB|), com sinal relativo */
   ma: number
   mb: number
+  /** raio de giração i = √(I/A), m — default retangular hDir/√12 */
+  i?: number
 }
 
 export interface SlendernessResult {
@@ -259,7 +372,7 @@ export interface SlendernessResult {
 }
 
 export function slenderness(inp: SlendernessInput): SlendernessResult {
-  const lambda = (3.464 * inp.le) / inp.hDir
+  const lambda = inp.le / (inp.i ?? inp.hDir / Math.sqrt(12))
   const maAbs = Math.abs(inp.ma)
   // αb p/ pilar biapoiado sem cargas transversais
   let alphaB = 1
@@ -303,19 +416,22 @@ export interface ColumnDesignOutput {
 
 const CANDIDATE_PHIS = [0.0125, 0.016, 0.02, 0.025]
 const CANDIDATE_NS = [4, 6, 8, 10, 12, 16, 20]
+/** circular: mínimo 6 barras; L: uma barra por vértice (6) — §18.4.2.1 */
+const CANDIDATE_NS_ROUND = [6, 8, 10, 12, 16, 20]
 
 export function designColumnSection(
   sec: ColumnSectionDef,
   demands: ColumnDemandPoint[],
   asMinAbs: number,
 ): ColumnDesignOutput {
-  const ac = sec.bw * sec.h
+  const ac = areaOf(sec)
   const notes: string[] = []
 
   // candidatos ordenados por As
   const candidates: BarArrangement[] = []
+  const ns = sec.shape === 'circle' || sec.shape === 'L' ? CANDIDATE_NS_ROUND : CANDIDATE_NS
   for (const phi of CANDIDATE_PHIS) {
-    for (const n of CANDIDATE_NS) {
+    for (const n of ns) {
       const positions = placeBars(sec, n, phi)
       if (!positions) continue
       const as = (n * Math.PI * phi * phi) / 4
@@ -376,7 +492,7 @@ export function designColumnSection(
   const phiL = best?.phi ?? CANDIDATE_PHIS[CANDIDATE_PHIS.length - 1]
   const phiT = Math.max(0.005, phiL / 4)
   const phiTmm = phiT <= 0.005 ? 5 : phiT <= 0.0063 ? 6.3 : 8
-  const spacing = Math.min(0.2, Math.min(sec.bw, sec.h), 12 * phiL)
+  const spacing = Math.min(0.2, sec.minDim ?? Math.min(sec.bw, sec.h), 12 * phiL)
   const stirrups = {
     phi: phiTmm / 1000,
     spacing,

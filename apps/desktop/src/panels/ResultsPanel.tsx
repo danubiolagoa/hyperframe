@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from 
 import {
   CONCRETE_CLASSES,
   COVER_BY_CAA,
+  buildMemorialPdf,
   comboReactions,
   polygonArea,
   type AnalysisResults,
@@ -12,6 +13,7 @@ import {
   type SlabDesignOutput,
 } from '@hyperframe/engine'
 import { useStore, type ResultsTab } from '../store'
+import { exportFile } from '../io/fileio'
 import { cm, cm2, fmt, fmtCmDim, ROMAN } from './format'
 import { IconClose, IconPrint } from '../components/Icons'
 import PranchasPanel from '../drawings/PranchasPanel'
@@ -25,7 +27,10 @@ const TABS: [ResultsTab, string][] = [
   ['vigas', 'Vigas'],
   ['pilares', 'Pilares'],
   ['lajes', 'Lajes'],
+  ['escadas', 'Escadas'],
+  ['reservatorios', 'Reservatórios'],
   ['fundacoes', 'Fundações'],
+  ['incendio', 'Incêndio'],
   ['reacoes', 'Reações'],
   ['quantitativos', 'Quantitativos'],
   ['pranchas', 'Pranchas'],
@@ -137,12 +142,85 @@ function beamGroups(results: AnalysisResults): [string, BeamSpanDesign[]][] {
 // aba: estabilidade
 // ---------------------------------------------------------------------------
 
+const RULE_TEXT: Record<string, string> = {
+  'somente-vento': 'somente vento (0,3·Mvento ≥ Mdesaprumo)',
+  'somente-desaprumo': 'somente desaprumo (Mvento < 0,3·Mdesaprumo)',
+  'vento+desaprumo': 'vento + desaprumo somados',
+}
+
 function EstabilidadeTab({ results, project }: { results: AnalysisResults; project: Project }) {
   const st = results.stability
   const sr = project.settings.stiffnessReduction
+  const imp = results.model.imperfections
+  const so = st.secondOrder
 
   return (
     <>
+      <SectionTitle>Imperfeições globais — desaprumo (§11.3.3.4.1)</SectionTitle>
+      {!imp ? (
+        <Empty text="Desaprumo não aplicado (vento desabilitado ou opção desativada)." />
+      ) : (
+        <>
+          <div style={{ fontSize: 12.5, margin: '4px 0 8px' }}>
+            θ1 = 1/{fmt(1 / imp.theta1, 0)} · θa = 1/{fmt(1 / imp.thetaA, 0)} · momento de
+            tombamento do desaprumo = {fmt(imp.baseMoment, 1)} kN·m
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Direção</th>
+                <th>Mvento (kN·m)</th>
+                <th>Mdesaprumo (kN·m)</th>
+                <th>Regra aplicada (§11.3.3.4.1 c)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {imp.rules.map((r) => (
+                <tr key={r.dir}>
+                  <td>{r.dir.replace('P', '+').replace('N', '−')}</td>
+                  <td>{fmt(r.mWind, 1)}</td>
+                  <td>{fmt(imp.baseMoment, 1)}</td>
+                  <td>{RULE_TEXT[r.rule]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <SectionTitle>2ª ordem global aproximada — 0,95·γz (§15.7.2)</SectionTitle>
+      {so.factors.length === 0 ? (
+        <Empty text="Sem majoração de 2ª ordem (sem ação lateral)." />
+      ) : (
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Direção</th>
+                <th>γz</th>
+                <th>Fator no vento (ELU)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {so.factors.map((f) => (
+                <tr key={f.dir}>
+                  <td>{f.dir}</td>
+                  <td>{fmt(f.gammaZ, 3)}</td>
+                  <td style={{ fontWeight: 700 }}>
+                    {f.factor > 1 ? `×${fmt(f.factor, 3)}` : '— (nós fixos)'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {so.notes.map((n, i) => (
+            <div key={i} className="faint" style={{ fontSize: 11.5, marginTop: 4 }}>
+              {n}
+            </div>
+          ))}
+        </>
+      )}
+
       <SectionTitle>Coeficiente γz (NBR 6118 §15.5.3)</SectionTitle>
       {st.gammaZ.length === 0 ? (
         <Empty text="Sem resultados de γz — ação horizontal (vento) desabilitada?" />
@@ -303,6 +381,8 @@ function VigasTab({ results }: { results: AnalysisResults }) {
             <th>Barras −</th>
             <th>Vd (kN)</th>
             <th>Estribos</th>
+            <th title="Torção §17.5 — envoltória de T e interação Vd/VRd2 + Td/TRd2">Td (kN·m)</th>
+            <th title="Armadura de pele §17.3.5.2.3 (h &gt; 60 cm)">Pele</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -311,7 +391,7 @@ function VigasTab({ results }: { results: AnalysisResults }) {
             <Fragment key={name}>
               <tr>
                 <td
-                  colSpan={12}
+                  colSpan={14}
                   style={{
                     background: 'var(--bg-2)',
                     color: 'var(--accent)',
@@ -349,6 +429,19 @@ function VigasTab({ results }: { results: AnalysisResults }) {
                     </td>
                     <td>{fmt(d.shear.vd, 1)}</td>
                     <td>{d.shear.spec}</td>
+                    <td
+                      title={
+                        d.torsion.negligible
+                          ? 'Torção de compatibilidade desprezível'
+                          : `interação biela = ${fmt(d.torsion.interaction, 2)} · A90/s = ${fmt(cm2(d.torsion.a90S), 2)} cm²/m · ΔAsl = ${fmt(cm2(d.torsion.asl), 2)} cm²`
+                      }
+                    >
+                      {d.torsion.negligible ? '—' : fmt(d.torsion.td, 1)}
+                      {!d.torsion.ok && (
+                        <span style={{ color: 'var(--err)', marginLeft: 4 }}>⚠</span>
+                      )}
+                    </td>
+                    <td>{d.skin.required ? d.skin.spec : '—'}</td>
                     <td>
                       <StatusChip s={d.status} />
                     </td>
@@ -360,11 +453,12 @@ function VigasTab({ results }: { results: AnalysisResults }) {
         </tbody>
       </table>
       <Footnote>
-        Flexão simples + cisalhamento (modelo I) por vão, envoltória ELU. Passe o mouse sobre a
-        linha para ver as observações do dimensionamento.
+        Flexão simples + cisalhamento (modelo I) + torção (§17.5, seção vazada equivalente) por
+        vão, envoltória ELU. Estribos já somam cisalhamento + torção. Passe o mouse sobre a linha
+        para ver as observações do dimensionamento.
       </Footnote>
 
-      <SectionTitle>Flechas em serviço (QP)</SectionTitle>
+      <SectionTitle>Serviço: flechas (QP) e fissuração ELS-W (frequente)</SectionTitle>
       {service.length === 0 ? (
         <Empty text="Sem verificação de flechas em serviço." />
       ) : (
@@ -378,6 +472,10 @@ function VigasTab({ results }: { results: AnalysisResults }) {
               <th>Fator fissuração</th>
               <th>δ total (mm)</th>
               <th>Limite L/250 (mm)</th>
+              <th title="Abertura característica de fissura na combinação frequente (§17.3.3.2)">
+                wk (mm)
+              </th>
+              <th>wk lim (mm)</th>
               <th>Verificação</th>
             </tr>
           </thead>
@@ -391,6 +489,16 @@ function VigasTab({ results }: { results: AnalysisResults }) {
                 <td>{fmt(b.crackFactor, 2)}</td>
                 <td style={{ fontWeight: 700 }}>{fmt(b.deltaTotal * 1000, 2)}</td>
                 <td>{fmt(b.limit * 1000, 2)}</td>
+                <td
+                  title={
+                    b.crack
+                      ? `σs = ${fmt(b.crack.sigmaS / 1000, 0)} MPa (M,freq = ${fmt(b.crack.mFreq, 1)} kN·m)`
+                      : undefined
+                  }
+                >
+                  {b.crack ? fmt(b.crack.wk * 1000, 2) : '—'}
+                </td>
+                <td>{b.crack ? fmt(b.crack.wkLimit * 1000, 1) : '—'}</td>
                 <td>
                   {b.ok ? (
                     <span className="chip ok">OK</span>
@@ -405,7 +513,73 @@ function VigasTab({ results }: { results: AnalysisResults }) {
       )}
       <Footnote>
         Flecha total = elástica (ELS quase-permanente, EI íntegro) × fator de fissuração (Branson)
-        × (1 + αf de fluência).
+        × (1 + αf de fluência). wk estimado no estádio II (combinação frequente) vs limite da tab.
+        13.4 por CAA.
+      </Footnote>
+
+      {results.beamOpenings.length > 0 && <BeamOpeningsSection items={results.beamOpenings} />}
+    </>
+  )
+}
+
+/** furos em vigas (NBR 6118 §13.2.5) */
+function BeamOpeningsSection({ items }: { items: AnalysisResults['beamOpenings'] }) {
+  return (
+    <>
+      <h4 style={{ margin: '18px 0 8px' }}>Furos na alma (NBR 6118 §13.2.5)</h4>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Viga</th>
+            <th>Planta</th>
+            <th>x (m)</th>
+            <th>Furo c×a (cm)</th>
+            <th>Desvio (cm)</th>
+            <th>Face</th>
+            <th>Dimensão</th>
+            <th>Apoio ≥ 2h</th>
+            <th>Entre furos</th>
+            <th>Situação</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((o) => {
+            const cond = (id: string) => {
+              const c = o.conditions.find((x) => x.id === id)
+              if (!c) return <span className="chip">—</span>
+              return c.ok ? <span className="chip ok">ok</span> : <span className="chip warn">não</span>
+            }
+            return (
+              <tr key={o.openingId} title={o.notes.join(' · ') || undefined}>
+                <td style={{ fontWeight: 600 }}>{o.beamName}</td>
+                <td>{o.planName}</td>
+                <td>{fmt(o.x, 2)}</td>
+                <td>
+                  {fmtCmDim(o.width)}×{fmtCmDim(o.height)}
+                </td>
+                <td>{fmtCmDim(o.yOffset)}</td>
+                <td>{cond('face')}</td>
+                <td>{cond('dimensao')}</td>
+                <td>{cond('apoio')}</td>
+                <td>{cond('vizinho')}</td>
+                <td>
+                  {o.status === 'dispensada' ? (
+                    <span className="chip ok">dispensada</span>
+                  ) : o.status === 'verificar' ? (
+                    <span className="chip warn">verificar região</span>
+                  ) : (
+                    <span className="chip err">inadequada</span>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <Footnote>
+        Dispensa de verificação (§13.2.5.2): distância à face ≥ max(5 cm; 2c), dimensão ≤ 12 cm e
+        h/3, distância ao apoio ≥ 2h e entre furos ≥ 2h. Furos "verificar" exigem análise específica
+        da região (ex.: bielas e tirantes); "inadequada" viola o §13.2.5.1.
       </Footnote>
     </>
   )
@@ -450,7 +624,7 @@ function PilaresTab({ results }: { results: AnalysisResults }) {
               <tr key={c.columnId} title={title || undefined}>
                 <td style={{ fontWeight: 600 }}>{c.name}</td>
                 <td>
-                  {fmtCmDim(c.section.bw)}×{fmtCmDim(c.section.h)}
+                  {c.sectionLabel}
                 </td>
                 <td>{fmt(c.nd, 0)}</td>
                 <td>
@@ -587,6 +761,8 @@ function LajesTab({ results }: { results: AnalysisResults }) {
 function FundacoesTab({ results, project }: { results: AnalysisResults; project: Project }) {
   const items = useMemo(() => byName(results.foundations), [results])
   const soil = project.settings.soil
+  const fnd = project.settings.foundation
+  const usePiles = fnd.type === 'estacas'
 
   return (
     <>
@@ -600,16 +776,68 @@ function FundacoesTab({ results, project }: { results: AnalysisResults; project:
           fontSize: 12,
         }}
       >
-        <span>
-          Solo: <strong>{soil.label}</strong> — σadm = {fmt(soil.sigmaAdm, 0)} kPa
-        </span>
+        {usePiles ? (
+          <span>
+            Estacas: <strong>{fnd.pileLabel}</strong> — φ {fmtCmDim(fnd.pileDiameter)} cm ·{' '}
+            {fmt(fnd.pileCapacity, 0)} kN/estaca · e = {fmt(fnd.pileSpacingFactor, 1)}φ
+          </span>
+        ) : (
+          <span>
+            Solo: <strong>{soil.label}</strong> — σadm = {fmt(soil.sigmaAdm, 0)} kPa
+          </span>
+        )}
         <span className="chip warn">
           ⚠ valores orientativos — projeto exige sondagem SPT (NBR 6122)
         </span>
       </div>
 
       {items.length === 0 ? (
-        <Empty text="Nenhuma sapata dimensionada." />
+        <Empty text="Nenhuma fundação dimensionada." />
+      ) : usePiles ? (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Pilar</th>
+              <th>Nserv (kN)</th>
+              <th>Estacas</th>
+              <th>Carga/estaca (kN)</th>
+              <th>Bloco a×b (m)</th>
+              <th>h (m)</th>
+              <th>α biela</th>
+              <th>σ biela pilar/estaca (kPa)</th>
+              <th>Tirante</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((f) => {
+              const pc = f.pileCap
+              if (!pc) return null
+              return (
+                <tr key={f.columnId} title={pc.notes.join(' · ') || undefined}>
+                  <td style={{ fontWeight: 600 }}>{f.name}</td>
+                  <td>{fmt(f.nServ, 0)}</td>
+                  <td style={{ fontWeight: 700 }}>{pc.nPiles}</td>
+                  <td>
+                    {fmt(pc.pileLoad, 0)} / {fmt(pc.pileCapacity, 0)}
+                  </td>
+                  <td>
+                    {fmt(pc.planA, 2)}×{fmt(pc.planB, 2)}
+                  </td>
+                  <td>{fmt(pc.h, 2)}</td>
+                  <td>{pc.nPiles > 1 ? `${fmt(pc.alphaDeg, 0)}°` : '—'}</td>
+                  <td>
+                    {fmt(pc.sigmaPil, 0)} / {fmt(pc.sigmaEst, 0)} ≤ {fmt(pc.sigmaLim, 0)}
+                  </td>
+                  <td>{pc.mainSpec}</td>
+                  <td>
+                    <StatusChip s={f.status} />
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       ) : (
         <table className="table">
           <thead>
@@ -629,6 +857,7 @@ function FundacoesTab({ results, project }: { results: AnalysisResults; project:
           <tbody>
             {items.map((f) => {
               const ft = f.footing
+              if (!ft) return null
               return (
                 <tr key={f.columnId} title={ft.notes.join(' · ') || undefined}>
                   <td style={{ fontWeight: 600 }}>{f.name}</td>
@@ -658,9 +887,388 @@ function FundacoesTab({ results, project }: { results: AnalysisResults; project:
         </table>
       )}
       <Footnote>
-        Sapatas rígidas isoladas — armadura pelo método das bielas (CG do pilar), tensões de
-        serviço com excentricidade (NBR 6118 §22.6 + NBR 6122).
+        {usePiles
+          ? 'Blocos rígidos sobre estacas — método das bielas (Blévot): tirantes sobre as estacas, verificação de esmagamento das bielas no pilar e nas estacas (α entre 45° e 55°).'
+          : 'Sapatas rígidas isoladas — armadura pelo método das bielas (CG do pilar), tensões de serviço com excentricidade (NBR 6118 §22.6 + NBR 6122).'}
       </Footnote>
+
+      {results.soilInteraction.enabled && results.soilInteraction.items.length > 0 && (
+        <SoilInteractionSection si={results.soilInteraction} />
+      )}
+
+      <FoundationLoadsSection rows={results.foundationLoads} />
+    </>
+  )
+}
+
+/** interação solo-estrutura: molas por fundação e recalques (ELS-QP) */
+function SoilInteractionSection({ si }: { si: AnalysisResults['soilInteraction'] }) {
+  return (
+    <>
+      <h4 style={{ margin: '18px 0 8px' }}>Interação solo-estrutura — molas e recalques</h4>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8, fontSize: 12 }}>
+        <span className="chip">recalque máx (ELS-QP): {fmt(si.maxSettlement * 1000, 1)} mm</span>
+        {si.maxDistortion && (
+          <span className={`chip ${si.maxDistortion.value > 1 / 500 ? 'warn' : 'ok'}`}>
+            distorção {si.maxDistortion.pair}: 1/
+            {Math.round(1 / Math.max(si.maxDistortion.value, 1e-9))} (limite usual 1/500)
+          </span>
+        )}
+      </div>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Pilar</th>
+            <th>Fundação</th>
+            <th>CRV (MN/m)</th>
+            <th>CRH (MN/m)</th>
+            <th>Krx (MN·m/rad)</th>
+            <th>Kry (MN·m/rad)</th>
+            <th>Recalque QP (mm)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {si.items.map((it) => (
+            <tr key={it.columnId} title={it.notes.join(' · ') || undefined}>
+              <td style={{ fontWeight: 600 }}>{it.name}</td>
+              <td>{it.kind}</td>
+              <td>{fmt(it.kv / 1000, 1)}</td>
+              <td>{fmt(it.kh / 1000, 1)}</td>
+              <td>{fmt(it.krx / 1000, 1)}</td>
+              <td>{fmt(it.kry / 1000, 1)}</td>
+              <td style={{ fontWeight: 600 }}>{fmt(it.settlementQP * 1000, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Footnote>
+        Molas estimadas da sondagem: Es = α·K·NSPT (Teixeira &amp; Godoy) p/ sapatas; Aoki–Velloso p/
+        estacas. O pórtico foi re-analisado sobre estes apoios elásticos. Projeto executivo exige
+        laudo geotécnico (NBR 6122).
+      </Footnote>
+    </>
+  )
+}
+
+/** planta de cargas: reações características por pilar */
+function FoundationLoadsSection({ rows }: { rows: AnalysisResults['foundationLoads'] }) {
+  if (rows.length === 0) return null
+  const caseFz = (r: AnalysisResults['foundationLoads'][number], id: string) =>
+    r.cases.find((c) => c.caseId === id)
+  return (
+    <>
+      <h4 style={{ margin: '18px 0 8px' }}>Planta de cargas — reações características (kN, kN·m)</h4>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Pilar</th>
+            <th>G Fz</th>
+            <th>Q Fz</th>
+            <th>W Fx máx</th>
+            <th>W Fy máx</th>
+            <th>Mx máx</th>
+            <th>My máx</th>
+            <th>ELU Fz máx</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const g = caseFz(r, 'G')
+            const q = caseFz(r, 'Q')
+            let wfx = 0
+            let wfy = 0
+            let mx = Math.abs(g?.mx ?? 0) + Math.abs(q?.mx ?? 0)
+            let my = Math.abs(g?.my ?? 0) + Math.abs(q?.my ?? 0)
+            for (const c of r.cases) {
+              if (!c.caseId.startsWith('W')) continue
+              wfx = Math.max(wfx, Math.abs(c.fx))
+              wfy = Math.max(wfy, Math.abs(c.fy))
+              mx = Math.max(mx, Math.abs(c.mx))
+              my = Math.max(my, Math.abs(c.my))
+            }
+            return (
+              <tr key={r.columnId}>
+                <td style={{ fontWeight: 600 }}>{r.name}</td>
+                <td>{fmt(g?.fz ?? 0, 0)}</td>
+                <td>{fmt(q?.fz ?? 0, 0)}</td>
+                <td>{fmt(wfx, 0)}</td>
+                <td>{fmt(wfy, 0)}</td>
+                <td>{fmt(mx, 0)}</td>
+                <td>{fmt(my, 0)}</td>
+                <td style={{ fontWeight: 600 }}>{fmt(r.fzEluMax, 0)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <Footnote>
+        Reações no topo da fundação (características, passe ELS). Exportável como prancha "Planta de
+        cargas" na aba Pranchas — dados p/ o projetista de fundações.
+      </Footnote>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// aba: escadas
+// ---------------------------------------------------------------------------
+
+function EscadasTab({ results }: { results: AnalysisResults }) {
+  const items = results.stairDesign
+  if (items.length === 0) {
+    return (
+      <Empty text="Nenhuma escada no modelo — desenhe uma região de carga do tipo escada na planta." />
+    )
+  }
+  return (
+    <>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Escada</th>
+            <th>Planta</th>
+            <th>Vão (m)</th>
+            <th>θ</th>
+            <th>Degraus</th>
+            <th>g / q (kN/m²)</th>
+            <th>Md (kN·m/m)</th>
+            <th>As (cm²/m)</th>
+            <th>Armadura</th>
+            <th>Distribuição</th>
+            <th>Flecha (mm)</th>
+            <th>Blondel</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((s) => {
+            const d = s.design
+            return (
+              <tr key={s.regionId} title={d.notes.join(' · ') || undefined}>
+                <td style={{ fontWeight: 600 }}>{s.name}</td>
+                <td style={{ fontFamily: 'var(--sans)' }}>{s.levelName}</td>
+                <td>{fmt(d.span, 2)}</td>
+                <td>{fmt(d.thetaDeg, 0)}°</td>
+                <td>{d.steps}</td>
+                <td>
+                  {fmt(d.g, 1)} / {fmt(d.q, 1)}
+                </td>
+                <td>{fmt(d.md, 1)}</td>
+                <td>{fmt(cm2(d.as), 2)}</td>
+                <td>{d.spec}</td>
+                <td>{d.distSpec}</td>
+                <td>
+                  {fmt(d.deflection * 1000, 1)} ≤ {fmt(d.deflectionLimit * 1000, 1)}
+                </td>
+                <td>
+                  {d.blondelOk ? (
+                    <span className="chip ok">{fmt(d.blondel, 0)} cm</span>
+                  ) : (
+                    <span className="chip warn">{fmt(d.blondel, 0)} cm</span>
+                  )}
+                </td>
+                <td>
+                  <StatusChip s={s.status} />
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <Footnote>
+        Lance dimensionado como laje armada em uma direção, biapoiado no vão em planta (NBR 6118
+        §17.2 + NBR 6120). Cargas: laje inclinada (γc·t/cosθ) + degraus (γc·e/2) + revestimento +
+        sobrecarga. Edite espelho/piso/espessura no inspetor da região. Patamares e apoios reais
+        devem ser verificados no detalhamento.
+      </Footnote>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// aba: reservatórios
+// ---------------------------------------------------------------------------
+
+function ReservatoriosTab({ results }: { results: AnalysisResults }) {
+  const items = results.tankDesign
+  if (items.length === 0) {
+    return (
+      <Empty text="Nenhum reservatório no modelo — desenhe uma região de carga do tipo reservatório na planta." />
+    )
+  }
+  return (
+    <>
+      {items.map((t) => {
+        const d = t.design
+        return (
+          <div key={t.regionId} style={{ marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '4px 0 8px' }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>
+                {t.name} ({t.levelName})
+              </span>
+              <span className="chip">
+                {fmt(d.a, 2)}×{fmt(d.b, 2)} m · lâmina {fmt(d.waterHeight, 2)} m ·{' '}
+                {fmt(d.volume, 1)} m³
+              </span>
+              <span className="chip">peso operação {fmt(d.totalWeight, 0)} kN</span>
+              <StatusChip s={t.status} />
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Elemento</th>
+                  <th>Esforço</th>
+                  <th>Armadura</th>
+                  <th>Complementar</th>
+                  <th>Verificação</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style={{ fontWeight: 600 }}>Paredes (vertical)</td>
+                  <td>Md = {fmt(d.wall.md, 1)} kN·m/m (engaste)</td>
+                  <td>{d.wall.spec} (face interna)</td>
+                  <td>horiz.: {d.wall.horizSpec} por face</td>
+                  <td>
+                    {d.wall.ok ? (
+                      <span className="chip ok">
+                        wk = {fmt(d.wall.wk * 1000, 2)} ≤ 0,2 mm
+                      </span>
+                    ) : (
+                      <span className="chip err">wk = {fmt(d.wall.wk * 1000, 2)} mm</span>
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ fontWeight: 600 }}>Fundo</td>
+                  <td>
+                    M+ = {fmt(d.bottom.dirA.mSpanD, 1)} · M− = {fmt(d.bottom.dirA.mSupportD, 1)}{' '}
+                    kN·m/m
+                  </td>
+                  <td>
+                    A: {d.bottom.dirA.spanSpec} · B: {d.bottom.dirB.spanSpec}
+                  </td>
+                  <td>negativas: {slabNegatives(d.bottom)}</td>
+                  <td>
+                    {d.bottom.dirA.ok && d.bottom.dirB.ok ? (
+                      <span className="chip ok">OK</span>
+                    ) : (
+                      <span className="chip err">rever espessura</span>
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ fontWeight: 600 }}>Tampa</td>
+                  <td>M+ = {fmt(d.top.dirA.mSpanD, 1)} kN·m/m</td>
+                  <td>
+                    A: {d.top.dirA.spanSpec} · B: {d.top.dirB.spanSpec}
+                  </td>
+                  <td>sobrecarga 1,0 kN/m²</td>
+                  <td>
+                    {d.top.dirA.ok && d.top.dirB.ok ? (
+                      <span className="chip ok">OK</span>
+                    ) : (
+                      <span className="chip err">rever espessura</span>
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            {d.notes.map((n, i) => (
+              <div key={i} className="faint" style={{ fontSize: 11, marginTop: 4 }}>
+                {n}
+              </div>
+            ))}
+          </div>
+        )
+      })}
+      <Footnote>
+        Paredes: empuxo hidrostático triangular (γw = 10 kN/m³), faixa vertical engastada na base
+        — estanqueidade ELS-W (wk ≤ 0,2 mm). Fundo engastado no contorno; tampa apoiada. Edite
+        lâmina/espessuras no inspetor da região.
+      </Footnote>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// aba: incêndio
+// ---------------------------------------------------------------------------
+
+function IncendioTab({ results }: { results: AnalysisResults }) {
+  const fire = results.fire
+  if (!fire.enabled) {
+    return <Empty text="Verificação de incêndio desativada — habilite em Parâmetros do Projeto." />
+  }
+  const groups: ['viga' | 'laje' | 'pilar', string][] = [
+    ['viga', 'Vigas (tab. 4/5 — método tabular)'],
+    ['laje', 'Lajes (tab. 6/7 — método tabular)'],
+    ['pilar', 'Pilares (§8.4 — método analítico)'],
+  ]
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '4px 0 10px', fontSize: 12 }}>
+        <span className="chip" style={{ fontWeight: 700 }}>
+          TRRF = {fire.trrf} min
+        </span>
+        <span>
+          NBR 14432: grupo {fire.occupancy}, h = {fmt(fire.buildingHeight, 1)} m → sugerido{' '}
+          {fire.trrfSuggested} min
+        </span>
+        {fire.allOk ? (
+          <span className="chip ok">todos os elementos atendem</span>
+        ) : (
+          <span className="chip err">há elementos que NÃO atendem</span>
+        )}
+      </div>
+
+      {groups.map(([kind, title]) => {
+        const items = fire.items.filter((i) => i.kind === kind)
+        if (items.length === 0) return null
+        return (
+          <div key={kind}>
+            <SectionTitle>{title}</SectionTitle>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Elemento</th>
+                  <th>{kind === 'laje' ? 'h (mm)' : 'b (mm)'}</th>
+                  <th>{kind === 'laje' ? 'h mín (mm)' : 'b mín (mm)'}</th>
+                  <th>c1 (mm)</th>
+                  <th>c1 req. (mm)</th>
+                  {kind === 'pilar' && <th>TRF (min)</th>}
+                  <th>Verificação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((i) => (
+                  <tr key={i.element} title={i.notes.join(' · ') || undefined}>
+                    <td style={{ fontFamily: 'var(--sans)' }}>{i.element}</td>
+                    <td>{fmt(i.dim, 0)}</td>
+                    <td>{fmt(i.dimRequired, 0)}</td>
+                    <td>{fmt(i.c1, 0)}</td>
+                    <td>{fmt(i.c1Required, kind === 'viga' ? 1 : 0)}</td>
+                    {kind === 'pilar' && <td>{i.trf !== undefined ? fmt(i.trf, 0) : '—'}</td>}
+                    <td>
+                      {i.ok ? (
+                        <span className="chip ok">atende</span>
+                      ) : (
+                        <span className="chip err">não atende</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
+
+      {fire.notes.map((n, i) => (
+        <div key={i} className="faint" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+          {n}
+        </div>
+      ))}
     </>
   )
 }
@@ -904,6 +1512,49 @@ function QuantitativosTab({ results, project }: { results: AnalysisResults; proj
           sub="indicador p/ orçamento preliminar"
         />
       </div>
+
+      {q.cost.enabled && (
+        <>
+          <SectionTitle>Estimativa de custo da estrutura</SectionTitle>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, minmax(170px, 1fr))',
+              gap: 12,
+              maxWidth: 980,
+            }}
+          >
+            <StatCard
+              label="Concreto"
+              value={`R$ ${fmt(q.cost.concrete, 0)}`}
+              unit=""
+              sub={`${fmt(project.settings.costs.concretePerM3, 0)} R$/m³`}
+            />
+            <StatCard
+              label="Aço (c/ perdas)"
+              value={`R$ ${fmt(q.cost.steel, 0)}`}
+              unit=""
+              sub={`${fmt(project.settings.costs.steelPerKg, 2)} R$/kg`}
+            />
+            <StatCard
+              label="Fôrmas"
+              value={`R$ ${fmt(q.cost.formwork, 0)}`}
+              unit=""
+              sub={`${fmt(project.settings.costs.formworkPerM2, 0)} R$/m²`}
+            />
+            <StatCard
+              label="TOTAL estimado"
+              value={`R$ ${fmt(q.cost.total, 0)}`}
+              unit=""
+              sub={
+                q.cost.perSlabArea
+                  ? `≈ R$ ${fmt(q.cost.perSlabArea, 0)}/m² de laje — custos editáveis nas configurações`
+                  : 'custos unitários editáveis nas configurações'
+              }
+            />
+          </div>
+        </>
+      )}
 
       <SectionTitle>Resumo do aço por bitola</SectionTitle>
       {steel.byPhi.length === 0 ? (
@@ -1179,6 +1830,26 @@ function RelatorioTab({ results, project }: { results: AnalysisResults; project:
             Sem verificações de estabilidade (vento desabilitado).
           </p>
         )}
+        {results.model.imperfections && (
+          <p style={{ fontSize: 11.5, margin: '6px 0 4px' }}>
+            Desaprumo global (§11.3.3.4.1): θa = 1/
+            {fmt(1 / results.model.imperfections.thetaA, 0)} —{' '}
+            {results.model.imperfections.rules
+              .map((r) => `${r.dir.replace('P', '+').replace('N', '−')}: ${RULE_TEXT[r.rule]}`)
+              .join(' · ')}
+            .
+          </p>
+        )}
+        {results.stability.secondOrder.applied && (
+          <p style={{ fontSize: 11.5, margin: '2px 0 10px' }}>
+            2ª ordem global aproximada (§15.7.2): esforços horizontais ELU majorados por 0,95·γz —{' '}
+            {results.stability.secondOrder.factors
+              .filter((f) => f.factor > 1)
+              .map((f) => `${f.dir}: ×${fmt(f.factor, 3)}`)
+              .join(' · ')}
+            .
+          </p>
+        )}
 
         {/* 4 — quantitativos */}
         <h3 style={rH3}>4. Quantitativos</h3>
@@ -1284,7 +1955,7 @@ function RelatorioTab({ results, project }: { results: AnalysisResults; project:
                 <tr key={c.columnId}>
                   <td style={rTd}>{c.name}</td>
                   <td style={rTd}>
-                    {fmtCmDim(c.section.bw)}×{fmtCmDim(c.section.h)}
+                    {c.sectionLabel}
                   </td>
                   <td style={rTd}>{fmt(cm2(c.as), 2)}</td>
                   <td style={rTd}>{c.bars || '—'}</td>
@@ -1335,9 +2006,47 @@ function RelatorioTab({ results, project }: { results: AnalysisResults; project:
         )}
 
         {/* 5c — fundações */}
-        <h3 style={rH3}>5c. Fundações — sapatas (resumo)</h3>
+        <h3 style={rH3}>
+          5c. Fundações — {project.settings.foundation.type === 'estacas' ? 'blocos sobre estacas' : 'sapatas'}{' '}
+          (resumo)
+        </h3>
         {footings.length === 0 ? (
-          <p style={{ fontSize: 11.5, margin: '6px 0 10px' }}>Nenhuma sapata dimensionada.</p>
+          <p style={{ fontSize: 11.5, margin: '6px 0 10px' }}>Nenhuma fundação dimensionada.</p>
+        ) : project.settings.foundation.type === 'estacas' ? (
+          <>
+            <p style={{ fontSize: 11.5, margin: '6px 0 4px' }}>
+              Estacas {project.settings.foundation.pileLabel} — φ{' '}
+              {fmtCmDim(project.settings.foundation.pileDiameter)} cm,{' '}
+              {fmt(project.settings.foundation.pileCapacity, 0)} kN/estaca (orientativo — exige
+              laudo geotécnico, NBR 6122). Blocos pelo método das bielas (Blévot).
+            </p>
+            <table style={rTable}>
+              <thead>
+                <tr>
+                  <th style={rTh}>Pilar</th>
+                  <th style={rTh}>Estacas</th>
+                  <th style={rTh}>Carga/estaca (kN)</th>
+                  <th style={rTh}>Bloco a×b×h (m)</th>
+                  <th style={rTh}>Tirante</th>
+                </tr>
+              </thead>
+              <tbody>
+                {footings.map((f) =>
+                  f.pileCap ? (
+                    <tr key={f.columnId}>
+                      <td style={rTd}>{f.name}</td>
+                      <td style={rTd}>{f.pileCap.nPiles}</td>
+                      <td style={rTd}>{fmt(f.pileCap.pileLoad, 0)}</td>
+                      <td style={rTd}>
+                        {fmt(f.pileCap.planA, 2)}×{fmt(f.pileCap.planB, 2)}×{fmt(f.pileCap.h, 2)}
+                      </td>
+                      <td style={rTd}>{f.pileCap.mainSpec}</td>
+                    </tr>
+                  ) : null,
+                )}
+              </tbody>
+            </table>
+          </>
         ) : (
           <>
             <p style={{ fontSize: 11.5, margin: '6px 0 4px' }}>
@@ -1353,19 +2062,115 @@ function RelatorioTab({ results, project }: { results: AnalysisResults; project:
                 </tr>
               </thead>
               <tbody>
-                {footings.map((f) => (
-                  <tr key={f.columnId}>
-                    <td style={rTd}>{f.name}</td>
+                {footings.map((f) =>
+                  f.footing ? (
+                    <tr key={f.columnId}>
+                      <td style={rTd}>{f.name}</td>
+                      <td style={rTd}>
+                        {fmt(f.footing.a, 2)}×{fmt(f.footing.b, 2)}×{fmt(f.footing.h, 2)}
+                      </td>
+                      <td style={rTd}>
+                        {fmt(f.footing.sigma, 0)} / {fmt(f.footing.sigmaMax, 0)}
+                      </td>
+                    </tr>
+                  ) : null,
+                )}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* 5d — escadas e reservatórios */}
+        {results.stairDesign.length > 0 && (
+          <>
+            <h3 style={rH3}>5d. Escadas (lances)</h3>
+            <table style={rTable}>
+              <thead>
+                <tr>
+                  <th style={rTh}>Escada</th>
+                  <th style={rTh}>Vão (m)</th>
+                  <th style={rTh}>Md (kN·m/m)</th>
+                  <th style={rTh}>Armadura</th>
+                  <th style={rTh}>Distribuição</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.stairDesign.map((s) => (
+                  <tr key={s.regionId}>
                     <td style={rTd}>
-                      {fmt(f.footing.a, 2)}×{fmt(f.footing.b, 2)}×{fmt(f.footing.h, 2)}
+                      {s.name} ({s.levelName})
                     </td>
-                    <td style={rTd}>
-                      {fmt(f.footing.sigma, 0)} / {fmt(f.footing.sigmaMax, 0)}
-                    </td>
+                    <td style={rTd}>{fmt(s.design.span, 2)}</td>
+                    <td style={rTd}>{fmt(s.design.md, 1)}</td>
+                    <td style={rTd}>{s.design.spec}</td>
+                    <td style={rTd}>{s.design.distSpec}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </>
+        )}
+        {results.tankDesign.length > 0 && (
+          <>
+            <h3 style={rH3}>5e. Reservatórios</h3>
+            <table style={rTable}>
+              <thead>
+                <tr>
+                  <th style={rTh}>Reservatório</th>
+                  <th style={rTh}>Planta (m)</th>
+                  <th style={rTh}>Volume (m³)</th>
+                  <th style={rTh}>Parede (vert.)</th>
+                  <th style={rTh}>Fundo A/B</th>
+                  <th style={rTh}>wk parede (mm)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.tankDesign.map((t) => (
+                  <tr key={t.regionId}>
+                    <td style={rTd}>
+                      {t.name} ({t.levelName})
+                    </td>
+                    <td style={rTd}>
+                      {fmt(t.design.a, 2)}×{fmt(t.design.b, 2)}×{fmt(t.design.waterHeight, 2)}
+                    </td>
+                    <td style={rTd}>{fmt(t.design.volume, 1)}</td>
+                    <td style={rTd}>{t.design.wall.spec}</td>
+                    <td style={rTd}>
+                      {t.design.bottom.dirA.spanSpec} / {t.design.bottom.dirB.spanSpec}
+                    </td>
+                    <td style={rTd}>{fmt(t.design.wall.wk * 1000, 2)} ≤ 0,20</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {/* 5f — incêndio */}
+        {results.fire.enabled && (
+          <>
+            <h3 style={rH3}>5f. Situação de incêndio (NBR 14432 / NBR 15200)</h3>
+            <p style={{ fontSize: 11.5, margin: '6px 0 4px' }}>
+              TRRF adotado: {results.fire.trrf} min (grupo {results.fire.occupancy}, altura{' '}
+              {fmt(results.fire.buildingHeight, 1)} m → sugerido {results.fire.trrfSuggested} min).
+              Resultado:{' '}
+              {results.fire.allOk
+                ? 'todos os elementos verificados ATENDEM ao método tabular/analítico.'
+                : `${results.fire.items.filter((i) => !i.ok).length} elemento(s) NÃO atendem — ver aba Incêndio.`}
+            </p>
+            {!results.fire.allOk && (
+              <ul style={{ margin: '4px 0 10px', paddingLeft: 18 }}>
+                {results.fire.items
+                  .filter((i) => !i.ok)
+                  .slice(0, 12)
+                  .map((i) => (
+                    <li key={i.element} style={{ fontSize: 11, marginBottom: 2 }}>
+                      {i.element}: c1 = {fmt(i.c1, 0)} mm (req. {fmt(i.c1Required, 0)} mm)
+                      {i.trf !== undefined ? ` · TRF = ${fmt(i.trf, 0)} min` : ''}
+                    </li>
+                  ))}
+              </ul>
+            )}
           </>
         )}
 
@@ -1501,8 +2306,34 @@ export default function ResultsPanel() {
           <span className="chip ok">sem avisos</span>
         )}
         <button
+          className="btn"
+          style={{ marginLeft: 'auto' }}
+          title="Exportar memorial de cálculo completo em PDF"
+          onClick={async () => {
+            try {
+              const bytes = buildMemorialPdf(project, results, {
+                generatedAt: new Date().toLocaleString('pt-BR'),
+                appVersion: '0.2.1',
+              })
+              const base = project.name.replace(/[^\p{L}\p{N}\-_ ]/gu, '').trim() || 'projeto'
+              await exportFile(
+                bytes,
+                `${base} — memorial.pdf`,
+                'Memorial de cálculo (PDF)',
+                'pdf',
+                'application/pdf',
+              )
+            } catch (err) {
+              alert(err instanceof Error ? err.message : String(err))
+            }
+          }}
+        >
+          <IconPrint size={14} />
+          Memorial PDF
+        </button>
+        <button
           className="btn-icon"
-          style={{ marginLeft: 'auto', width: 26, height: 26 }}
+          style={{ width: 26, height: 26 }}
           title="Fechar painel"
           onClick={() => setResultsOpen(false)}
         >
@@ -1553,7 +2384,10 @@ export default function ResultsPanel() {
         {tab === 'vigas' && <VigasTab results={results} />}
         {tab === 'pilares' && <PilaresTab results={results} />}
         {tab === 'lajes' && <LajesTab results={results} />}
+        {tab === 'escadas' && <EscadasTab results={results} />}
+        {tab === 'reservatorios' && <ReservatoriosTab results={results} />}
         {tab === 'fundacoes' && <FundacoesTab results={results} project={project} />}
+        {tab === 'incendio' && <IncendioTab results={results} />}
         {tab === 'reacoes' && <ReacoesTab results={results} project={project} />}
         {tab === 'quantitativos' && <QuantitativosTab results={results} project={project} />}
         {tab === 'pranchas' && <PranchasPanel />}

@@ -15,6 +15,7 @@ import {
   type AnalysisResults,
   type Beam,
   type Column,
+  type ColumnSection,
   type DxfUnderlay,
   type ElementRef,
   type FloorPlan,
@@ -35,7 +36,10 @@ export type ResultsTab =
   | 'vigas'
   | 'pilares'
   | 'lajes'
+  | 'escadas'
+  | 'reservatorios'
   | 'fundacoes'
+  | 'incendio'
   | 'reacoes'
   | 'quantitativos'
   | 'pranchas'
@@ -53,6 +57,8 @@ export interface DisplayOptions {
 
 export interface D3Options {
   showSlabs: boolean
+  /** escadas e reservatórios como sólidos 3D */
+  showRegions: boolean
   isolateActiveLevel: boolean
   showDeformed: boolean
   deformScale: number
@@ -62,8 +68,8 @@ export interface D3Options {
 }
 
 export interface ElementDefaults {
-  columnSection: SectionRect
-  columnRotation: 0 | 90
+  columnSection: ColumnSection
+  columnRotation: 0 | 90 | 180 | 270
   beamSection: SectionRect
   slabThickness: number
   slabFinish: number
@@ -71,7 +77,7 @@ export interface ElementDefaults {
   slabLiveLabel: string
   wallW: number
   wallLabel: string
-  regionKind: 'escada' | 'reservatorio' | 'generica'
+  regionKind: 'escada' | 'reservatorio' | 'generica' | 'furo'
 }
 
 export interface HFState {
@@ -107,6 +113,10 @@ export interface HFState {
   newProject: (params: NewProjectParams) => void
   loadProject: (p: Project, fileName?: string | null) => void
   setProjectName: (name: string) => void
+  /** metadados do projeto (autor, cliente, endereço…) — carimbo das pranchas */
+  setProjectMeta: (
+    patch: Partial<Pick<Project, 'name' | 'author' | 'city' | 'client' | 'address'>>,
+  ) => void
   updateSettings: (patch: Partial<ProjectSettings>) => void
 
   // ---- ações: ui ----
@@ -152,6 +162,15 @@ export interface HFState {
   assignPlanToLevel: (levelId: string, planId: string | null) => void
   /** remove planta se nenhum nível a usa */
   deletePlan: (planId: string) => void
+
+  // ---- níveis ----
+  /** altera o pé-direito do nível (desloca este nível e todos acima) */
+  setStoryHeight: (levelId: string, height: number) => void
+  renameLevel: (levelId: string, name: string) => void
+
+  // ---- arquivo ----
+  /** registra salvamento bem-sucedido (caminho/nome) e limpa dirty */
+  markSaved: (fileName: string | null) => void
 
   // ---- underlay DXF ----
   setUnderlay: (underlay: DxfUnderlay | null) => void
@@ -208,6 +227,7 @@ export const useStore = create<HFState>()(
       display: { showAxes: true, showDims: true, showNames: true, showLoads: true, showSlabs: true },
       d3: {
         showSlabs: true,
+        showRegions: true,
         isolateActiveLevel: false,
         showDeformed: false,
         deformScale: 200,
@@ -264,6 +284,8 @@ export const useStore = create<HFState>()(
       },
       setProjectName: (name) =>
         set((s) => ({ project: { ...s.project, name }, dirty: true })),
+      setProjectMeta: (patch) =>
+        set((s) => ({ project: { ...s.project, ...patch }, dirty: true })),
       updateSettings: (patch) =>
         set((s) => ({
           project: { ...s.project, settings: { ...s.project.settings, ...patch } },
@@ -637,6 +659,45 @@ export const useStore = create<HFState>()(
           dirty: true,
         })
       },
+
+      // ---- níveis ----
+      setStoryHeight: (levelId, height) => {
+        if (!(height > 0.5) || height > 10) return
+        set((s) => {
+          const sorted = [...s.project.levels].sort((a, b) => a.elevation - b.elevation)
+          const idx = sorted.findIndex((l) => l.id === levelId)
+          if (idx <= 0) return {}
+          const oldH = sorted[idx].elevation - sorted[idx - 1].elevation
+          const delta = height - oldH
+          if (Math.abs(delta) < 1e-9) return {}
+          // desloca o nível editado e todos os que estão acima dele
+          const newElev = new Map<string, number>()
+          sorted.forEach((l, i) => newElev.set(l.id, l.elevation + (i >= idx ? delta : 0)))
+          return {
+            project: {
+              ...s.project,
+              levels: s.project.levels.map((l) => ({
+                ...l,
+                elevation: newElev.get(l.id) ?? l.elevation,
+              })),
+            },
+            dirty: true,
+            results: null,
+            analysisStatus: 'idle',
+          }
+        })
+      },
+      renameLevel: (levelId, name) =>
+        set((s) => ({
+          project: {
+            ...s.project,
+            levels: s.project.levels.map((l) => (l.id === levelId ? { ...l, name } : l)),
+          },
+          dirty: true,
+        })),
+
+      // ---- arquivo ----
+      markSaved: (fileName) => set({ fileName, dirty: false }),
 
       // ---- underlay DXF ----
       setUnderlay: (underlay) =>

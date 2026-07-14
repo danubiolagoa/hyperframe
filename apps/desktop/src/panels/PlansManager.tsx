@@ -1,11 +1,13 @@
 import { useMemo } from 'react'
 import { useStore } from '../store'
 import { fmt } from './format'
+import { NumberField } from './NumberField'
 import { IconClose } from '../components/Icons'
 
 /**
- * Gerenciador de plantas de forma: atribuição planta ↔ nível, renomear,
- * duplicar e excluir plantas. Modal condicionado a `plansManagerOpen`.
+ * Gerenciador de plantas de forma: atribuição planta ↔ nível, pé-direito
+ * variável por pavimento, renomear, duplicar e excluir plantas.
+ * Modal condicionado a `plansManagerOpen`.
  */
 export default function PlansManager() {
   const open = useStore((s) => s.plansManagerOpen)
@@ -15,6 +17,13 @@ export default function PlansManager() {
   const renamePlan = useStore((s) => s.renamePlan)
   const assignPlanToLevel = useStore((s) => s.assignPlanToLevel)
   const deletePlan = useStore((s) => s.deletePlan)
+  const setStoryHeight = useStore((s) => s.setStoryHeight)
+  const renameLevel = useStore((s) => s.renameLevel)
+
+  const sortedLevels = useMemo(
+    () => [...project.levels].sort((a, b) => a.elevation - b.elevation),
+    [project.levels],
+  )
 
   const usage = useMemo(() => {
     const map = new Map<string, number>()
@@ -38,41 +47,70 @@ export default function PlansManager() {
 
         <div className="modal-body">
           {/* --------------------------------------------- atribuição */}
-          <h3 className="panel-title">Atribuição por nível</h3>
+          <h3 className="panel-title">Níveis (pé-direito variável)</h3>
           <table className="table">
             <thead>
               <tr>
                 <th>Nível</th>
+                <th title="Distância ao nível inferior — editar desloca este nível e os acima">
+                  Pé-direito (m)
+                </th>
                 <th>Cota (m)</th>
                 <th>Planta</th>
               </tr>
             </thead>
             <tbody>
-              {project.levels.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ fontFamily: 'var(--sans)', fontWeight: 600 }}>{l.name}</td>
-                  <td>{fmt(l.elevation, 2)}</td>
-                  <td>
-                    <select
-                      className="select"
-                      style={{ width: '100%' }}
-                      value={l.planId ?? ''}
-                      onChange={(e) => assignPlanToLevel(l.id, e.target.value || null)}
-                    >
-                      <option value="">— sem planta —</option>
-                      {project.plans.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                </tr>
-              ))}
+              {sortedLevels.map((l, i) => {
+                const below = i > 0 ? sortedLevels[i - 1] : null
+                const height = below ? l.elevation - below.elevation : null
+                return (
+                  <tr key={l.id}>
+                    <td>
+                      <input
+                        className="input"
+                        style={{ width: '100%', fontFamily: 'var(--sans)', fontWeight: 600 }}
+                        value={l.name}
+                        spellCheck={false}
+                        onChange={(e) => renameLevel(l.id, e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      {height === null ? (
+                        <span className="faint">—</span>
+                      ) : (
+                        <NumberField
+                          value={height}
+                          digits={2}
+                          min={1}
+                          max={10}
+                          style={{ width: 76 }}
+                          onCommit={(v) => setStoryHeight(l.id, v)}
+                        />
+                      )}
+                    </td>
+                    <td>{fmt(l.elevation, 2)}</td>
+                    <td>
+                      <select
+                        className="select"
+                        style={{ width: '100%' }}
+                        value={l.planId ?? ''}
+                        onChange={(e) => assignPlanToLevel(l.id, e.target.value || null)}
+                      >
+                        <option value="">— sem planta —</option>
+                        {project.plans.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
           <div className="faint" style={{ fontSize: 11, marginTop: 6 }}>
-            ⚠ Alterar a atribuição de plantas invalida os resultados da análise.
+            ⚠ Alterar pé-direito ou atribuição de plantas invalida os resultados da análise.
           </div>
 
           {/* --------------------------------------------- plantas */}

@@ -14,11 +14,13 @@ import {
   crackingMoment,
   creepFactor,
 } from '../nbr/nbr6118/deflections'
+import { crackLimit, crackWidth } from '../nbr/nbr6118/cracking'
 
 /**
  * Flechas de vigas em serviço (combinação quase-permanente):
  * flecha elástica extraída do próprio pórtico (interpolação de Hermite entre
  * nós, relativa à corda do vão) × amplificação de Branson × (1 + αf).
+ * Fissuração ELS-W (§17.3.3.2): wk na combinação FREQUENTE vs tab. 13.4.
  */
 export function runBeamService(
   project: Project,
@@ -28,6 +30,7 @@ export function runBeamService(
   beamDesign: BeamSpanDesign[],
 ): BeamServiceResult[] {
   const qp = combos.find((c) => c.id === 'ELS-QP')
+  const freq = combos.find((c) => c.id === 'ELS-FREQ')
   if (!qp) return []
   const cp = concreteProps(
     project.settings.concrete.fck,
@@ -52,6 +55,20 @@ export function runBeamService(
       const dg = cr.memberDiagrams[m]
       if (mz[m].length === 0) mz[m] = dg.Mz.map((v) => factor * v)
       else for (let s = 0; s < dg.Mz.length; s++) mz[m][s] += factor * dg.Mz[s]
+    }
+  }
+
+  // momentos da combinação FREQUENTE (p/ ELS-W)
+  const mzFreq: number[][] = Array.from({ length: nMembers }, () => [])
+  if (freq) {
+    for (const [caseId, factor] of Object.entries(freq.factors)) {
+      const cr = casesEls[caseId as CaseId]
+      if (!cr) continue
+      for (let m = 0; m < nMembers; m++) {
+        const dg = cr.memberDiagrams[m]
+        if (mzFreq[m].length === 0) mzFreq[m] = dg.Mz.map((v) => factor * v)
+        else for (let s = 0; s < dg.Mz.length; s++) mzFreq[m][s] += factor * dg.Mz[s]
+      }
     }
   }
 
@@ -125,6 +142,36 @@ export function runBeamService(
     const deltaTotal = deltaMax * crackFactor * (1 + creepFactor())
     const limit = length / 250
 
+    // ELS-W: abertura de fissuras na combinação frequente (§17.3.3.2)
+    let crack = null
+    if (freq && asProvided > 1e-9) {
+      let mFreqPos = 0
+      for (const mi of memberIds) {
+        for (const v of mzFreq[mi] ?? []) mFreqPos = Math.max(mFreqPos, v)
+      }
+      if (mFreqPos > 0.1) {
+        const cw = crackWidth({
+          ms: mFreqPos,
+          bw,
+          h,
+          d,
+          as: asProvided,
+          phi: design?.positive.barsPhi || 0.0125,
+          alphaE,
+          es: project.settings.steel.Es,
+          fctm: cp.fctm,
+        })
+        const wkLimit = crackLimit(project.settings.caa)
+        crack = {
+          mFreq: mFreqPos,
+          sigmaS: cw.sigmaS,
+          wk: cw.wk,
+          wkLimit,
+          ok: cw.wk <= wkLimit,
+        }
+      }
+    }
+
     const [beamId] = key.split('|')
     out.push({
       beamId,
@@ -135,7 +182,8 @@ export function runBeamService(
       crackFactor,
       deltaTotal,
       limit,
-      ok: deltaTotal <= limit,
+      ok: deltaTotal <= limit && (crack?.ok ?? true),
+      crack,
     })
   }
   return out.sort(

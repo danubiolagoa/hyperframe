@@ -28,19 +28,80 @@
 - [x] **Múltiplas plantas de forma** (térreo ≠ tipo ≠ cobertura) com gerenciador
 - [x] Regiões de carga: **escadas e reservatório/caixa d'água** (distribuição às lajes por interseção de polígonos)
 - [ ] **Validação cruzada** (ver VALIDATION.md): 5 edifícios-referência vs Ftool/Eberick/planilhas → publicar relatório — **bloqueante p/ venda**
-- [ ] Diagramas 2D por barra no inspetor (M, V, N com valores)
-- [ ] Memorial de cálculo completo em PDF (hoje: resumo imprimível)
-- [ ] Salvar/abrir nativo (diálogos do SO via plugin Tauri) + autosave/recuperação
-- [ ] Pé-direito variável por pavimento na UI (modelo já suporta)
+- [x] Diagramas 2D por barra no inspetor (M, V, N com valores e seletor de combinação)
+- [x] Memorial de cálculo completo em **PDF** (writer PDF próprio no engine, zero deps,
+  15 seções, multipágina, pesquisável) — botão "Memorial PDF" no painel de resultados
+- [x] Salvar/abrir **nativo** (plugins Tauri dialog/fs; ⌘S/⇧⌘S/⌘O; fallback browser) +
+  **autosave** a cada edição com recuperação na tela inicial
+- [x] Pé-direito variável por pavimento na UI (gerenciador de plantas/níveis)
+
+## v0.2.1 — Paridade com o tour do TQS ✅ (entregue)
+
+> Cobertura dos módulos do "Tour pelo TQS" (docs.tqs.com.br id 3124): Ações, Análise,
+> Vigas, Pilares, Lajes, **Escadas**, **Reservatórios**, Fundações (**estacas**),
+> **Incêndio**. 177 testes.
+
+- [x] **Ações**: desaprumo global (§11.3.3.4.1) com θ1/θa e regra de combinação com o
+  vento pelos momentos de tombamento (somente vento / somente desaprumo / soma)
+- [x] **Análise**: 2ª ordem global aproximada — majoração 0,95·γz dos esforços
+  horizontais ELU p/ 1,1 < γz ≤ 1,3 (§15.7.2); aviso p/ γz > 1,3
+- [x] **Vigas**: torção (§17.5 — seção vazada equivalente, TRd2, estribos+longitudinal,
+  interação c/ cortante), fissuração ELS-W (wk estádio II, comb. frequente, tab. 13.4)
+  e armadura de pele (§17.3.5.2.3)
+- [x] **Escadas**: dimensionamento do lance (laje inclinada em 1 direção — cargas NBR
+  6120, flexão, flecha c/ Branson, Blondel) com parâmetros no inspetor da região
+- [x] **Reservatórios**: paredes sob empuxo hidrostático (estanqueidade wk ≤ 0,2 mm),
+  fundo engastado c/ coluna d'água, tampa; volume e peso em operação
+- [x] **Fundações**: blocos rígidos sobre estacas pelo método das bielas (Blévot,
+  1–5 estacas: tirantes, bielas no pilar/estaca, α 45–55°), presets de estacas,
+  alternância sapata×estaca nas configurações
+- [x] **Incêndio**: TRRF automático (NBR 14432 tab. A.1 por ocupação×altura) +
+  método tabular NBR 15200 (vigas tab. 4/5, lajes tab. 6/7) + método analítico p/
+  pilares (TRF ≥ TRRF) — aba própria e seção no relatório
+- [x] **Escadas e reservatórios no 3D**: lance com degraus + laje inclinada + patamar
+  (sentido de subida configurável) e caixa d'água com fundo/paredes/tampa — seleção
+  sincronizada 2D↔3D e isolamento de pavimento
+- [x] **Furos/aberturas de laje** (paridade com furos do modelador TQS): elemento
+  próprio (FUR, shaft/elevador) + escada abre furo automático no pavimento
+  (desligável). Desconta g/q e concreto/fôrma, vira furo real no 3D, X de vazio na
+  planta (editor e DXF) e nota de reforço de borda no dimensionamento
+
+## v0.2.2 — Paridade com o TQS Passo-a-Passo ✅ (entregue)
+
+> Cobertura do tutorial "TQS Passo-a-Passo" (docs.tqs.com.br id 3131): elementos
+> estruturais (pilares L/circulares, transferências, furos de viga, seção variável),
+> interação solo-estrutura (SISES-like), cargas na fundação, desenho de formas com corte,
+> plotagem com moldura/carimbo e resumo com custo. 244 testes.
+
+- [x] **Pilares circulares e em L** (+ rotação 0/90/180/270°): propriedades geométricas
+  exatas, flexo-compressão oblíqua por integração do contorno (polígono/48-gon), barras
+  em anel/vértices+perímetro, esbeltez por raio de giração real, fôrma/3D/DXF/detalhe
+- [x] **Pilar nasce/morre em qualquer nível** (UI): transferência em viga detectada
+  (aviso) e validada na consistência
+- [x] **Furos na alma de vigas** com verificação de dispensa da NBR 6118 §13.2.5.2
+  (face, dimensão, apoio, furo vizinho) — inspetor, planta, forma e memorial
+- [x] **Seção variável por trecho** da viga (corta o vão de dimensionamento na mudança)
+- [x] **Carga de parede por trecho** [x₀, x₁] da viga
+- [x] **Interação solo-estrutura**: sondagem SPT por camadas → Es = α·K·NSPT (Teixeira &
+  Godoy), molas CRV/CRH/rotacionais de sapatas e blocos (capacidade e mola de estaca por
+  **Aoki–Velloso** com F1/F2 por execução), apoios elásticos no solver (GDL com mola),
+  re-análise em 2 passes, recalques ELS-QP + distorção angular (alerta > 1/500)
+- [x] **Planta de cargas na fundação**: reações características por caso (G/Q/vento) e
+  envoltória ELU por pilar — aba, memorial e prancha DXF
+- [x] **Corte esquemático** (elevação com níveis cotados, pilares, vigas seccionadas)
+- [x] **Moldura + carimbo ABNT** nas pranchas (A0–A4, escala auto/fixa, dados da obra)
+- [x] **Estimativa de custo** nos quantitativos e memorial (R$/m³, R$/kg, R$/m²)
+- [x] **Verificação de consistência** tipificada (grave/média/leve) com seleção do
+  elemento apontado
+- [x] Bordas livres de laje: quinhão redistribuído às bordas apoiadas (força conservada)
 
 ## v0.3 — Beta fechado (2–3 meses)
 
 - [ ] 10–15 calculistas convidados; telemetria de erros (opt-in) e feedback in-app
 - [ ] Detalhamento de armaduras de vigas (desenho: barras, dobras, tabela de aço) → prancha DXF/PDF
-- [ ] Importação de DXF de arquitetura como underlay do editor 2D
 - [ ] Núcleo rígido / pilares-parede (elemento de casca simplificado ou pórtico equivalente)
-- [ ] Torção de compatibilidade & redistribuição de momentos
-- [ ] Excentricidade de vento (±7,5%) e desaprumo global (NBR 6118 §11.3.3.4.1)
+- [x] ~~Torção de compatibilidade~~ (v0.2.1) · [ ] redistribuição de momentos
+- [x] ~~Desaprumo global (§11.3.3.4.1)~~ (v0.2.1) · [ ] excentricidade de vento (±7,5%)
 - [ ] Performance: solver em **Rust/WASM** (mesma interface, 10–50× mais rápido, base da proteção anticópia)
 - [ ] Instaladores assinados: notarização macOS (Apple Developer R$ 500/ano) + Authenticode Windows; CI GitHub Actions com matriz mac/win
 
@@ -58,17 +119,18 @@
 - [ ] IA nativa: "lançar estrutura a partir da planta de arquitetura", crítica automática de modelo ("L3 sem apoio", "P12 esbelto"), memorial redigido por IA
 - [ ] Protensão (lajes/vigas), pré-moldados, alvenaria estrutural (NBR 16868), aço (NBR 8800 — reaproveitar know-how do vigaframe/mixlab)
 - [ ] Análise dinâmica (vento dinâmico NBR 6123, sismo NBR 15421)
-- [ ] Interação solo-estrutura (molas de fundação — reaproveitar soloslab)
+- [x] ~~Interação solo-estrutura (molas de fundação)~~ (v0.2.2 — evoluir p/ molas por
+  camada ao longo de estacas e sondagens múltiplas por região)
 - [ ] Colaboração em nuvem (projetos compartilhados, versionamento)
 
 ## Dívidas técnicas conhecidas (v0.1)
 
 | Item | Impacto | Plano |
 |---|---|---|
-| Ca do vento: grade aproximada da Fig. 4 | ±10% na força de vento; usuário pode sobrescrever | Digitalizar a figura da norma (v0.2) |
-| Quinhões de laje: uniforme equivalente (não trapezoidal) | Momentos de viga ligeiramente suavizados | Cargas trapezoidais exatas (v0.2) |
+| Ca do vento: grade aproximada da Fig. 4 | ±10% na força de vento; usuário pode sobrescrever | Digitalizar a figura da norma (v0.3) |
+| Quinhões de laje: uniforme equivalente (não trapezoidal) | Momentos de viga ligeiramente suavizados | Cargas trapezoidais exatas (v0.3) |
 | Lajes não entram na rigidez (só carga + diafragma) | Conservador p/ vigas | Grelha/casca opcional (v0.3) |
-| Pilar: verificação simplificada (não dimensiona As definitivo) | Rotulado na UI | Flexo-compressão oblíqua (v0.2) |
-| Vigas: sem flecha ELS, sem armadura de pele | Relatório indica | v0.2 |
-| Apoios sempre engastados na fundação | Usual, mas não configurável | Molas/rotulado (v0.2) |
+| Apoios sempre engastados na fundação | Usual, mas não configurável | Molas/rotulado (v0.3) |
 | V0 das cidades: aproximado das isopletas | Usuário confirma na UI | Mapa interativo (v0.3) |
+| ~~Pilar: verificação simplificada~~ | — | ✅ resolvido (v0.2: flexo-compressão oblíqua) |
+| ~~Vigas: sem flecha ELS, sem armadura de pele~~ | — | ✅ resolvido (v0.2 flechas; v0.2.1 pele/wk/torção) |

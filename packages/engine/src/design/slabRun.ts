@@ -3,7 +3,8 @@ import type { SlabDesignResultItem } from '../analysis/types'
 import { dist, projectOnSegment } from '../geometry/geometry'
 import { concreteProps, coverFor, fyd as fydOf } from '../nbr/nbr6118/materials'
 import { designSlab, type EdgeCondition } from '../nbr/nbr6118/slabDesign'
-import { slabExtraLoads } from '../analysis/buildModel'
+import { slabExtraLoads, slabOpeningsArea } from '../analysis/buildModel'
+import { polygonArea } from '../geometry/geometry'
 
 /** laje retangular? (4 vértices, lados opostos iguais, ângulos retos) */
 function isRectangular(poly: Vec2[]): boolean {
@@ -60,9 +61,18 @@ export function runSlabDesign(project: Project): SlabDesignResultItem[] {
       const rect = isRectangular(slab.polygon)
       const extras = slabExtraLoads(plan, slab)
       const notes: string[] = []
+      let openWarn = false
       if (extras.g > 1e-9 || extras.q > 1e-9) {
         notes.push(
           `Inclui carga de região (escada/reservatório): +${extras.g.toFixed(1)} kN/m² (g), +${extras.q.toFixed(1)} kN/m² (q).`,
+        )
+      }
+      const openArea = slabOpeningsArea(plan, slab)
+      if (openArea > 1e-6) {
+        const ratio = openArea / Math.max(polygonArea(slab.polygon), 1e-9)
+        openWarn = ratio > 0.15
+        notes.push(
+          `Furo/abertura de ${(100 * ratio).toFixed(0)}% da área — o método de Marcus não considera aberturas; prever reforço nas bordas do furo (verificação manual).`,
         )
       }
       if (!rect) {
@@ -107,7 +117,7 @@ export function runSlabDesign(project: Project): SlabDesignResultItem[] {
 
       let status: SlabDesignResultItem['status'] = 'ok'
       if (!design.dirA.ok || !design.dirB.ok || !design.minThicknessOk) status = 'falha'
-      else if (!design.deflectionOk) status = 'atencao'
+      else if (!design.deflectionOk || openWarn) status = 'atencao'
 
       out.push({
         slabId: slab.id,

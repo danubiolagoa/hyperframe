@@ -49,12 +49,16 @@ function WallGlyph({
   const color = sel ? 'var(--sel)' : hov ? 'var(--blue)' : 'var(--accent)'
   const half = (beam.section.bw / 2) * k
   const ticks: ReactElement[] = []
+  // trecho carregado [x0, x1] em m ao longo do eixo (ausente = viga inteira)
+  const s0 = wl.x0 ?? -Infinity
+  const s1 = wl.x1 ?? Infinity
 
   let longest = -1
   let lmx = 0
   let lmy = 0
   let lnx = 0
   let lny = 1
+  let acc = 0 // arco acumulado, m
 
   for (let i = 0; i + 1 < beam.path.length; i++) {
     const a = beam.path[i]
@@ -66,10 +70,12 @@ function WallGlyph({
     const dx = cx - ax
     const dy = cy - ay
     const L = Math.hypot(dx, dy)
+    const Lm = L / k // comprimento real do trecho, m
     if (L < 1e-9) continue
     const nx = -dy / L
     const ny = dx / L
-    if (L > longest) {
+    const covered = Math.min(acc + Lm, s1) - Math.max(acc, s0)
+    if (L > longest && covered > 0) {
       longest = L
       lmx = (ax + cx) / 2
       lmy = (ay + cy) / 2
@@ -83,6 +89,8 @@ function WallGlyph({
     for (let j = 0; j <= count; j++) {
       const s = count === 0 ? L / 2 : pad + j * step
       if (s > L + 1e-6) break
+      const sm = acc + s / k // posição no eixo, m
+      if (sm < s0 - 1e-9 || sm > s1 + 1e-9) continue
       const px = ax + (dx * s) / L
       const py = ay + (dy * s) / L
       ticks.push(
@@ -98,6 +106,7 @@ function WallGlyph({
         />,
       )
     }
+    acc += Lm
   }
 
   // rótulo no meio do trecho mais longo, deslocado para o lado "de baixo" da tela
@@ -123,6 +132,9 @@ function WallGlyph({
           fill={color}
         >
           {fmt(wl.w, 1)} kN/m
+          {wl.x0 !== undefined && wl.x1 !== undefined
+            ? ` (${fmt(wl.x0, 1)}–${fmt(wl.x1, 1)} m)`
+            : ''}
         </text>
       )}
     </g>
