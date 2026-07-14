@@ -681,10 +681,14 @@ function LajesTab({ results }: { results: AnalysisResults }) {
     [results],
   )
 
+  const macicas = items.filter((i) => i.kind !== 'nervurada')
+  const nervuradas = items.filter((i) => i.kind === 'nervurada')
+
   if (items.length === 0) return <Empty text="Nenhuma laje no modelo." />
 
   return (
     <>
+      {macicas.length > 0 && (
       <table className="table">
         <thead>
           <tr>
@@ -702,7 +706,7 @@ function LajesTab({ results }: { results: AnalysisResults }) {
           </tr>
         </thead>
         <tbody>
-          {items.map((s) => {
+          {macicas.map((s) => {
             const d = s.design
             const title = s.notes.length > 0 ? s.notes.join(' · ') : undefined
             return (
@@ -746,10 +750,86 @@ function LajesTab({ results }: { results: AnalysisResults }) {
           })}
         </tbody>
       </table>
-      <Footnote>
-        Marcus sem redução por torção (a favor da segurança); flecha com Branson + fluência
-        (αf=1,32).
-      </Footnote>
+      )}
+
+      {nervuradas.length > 0 && (
+        <>
+          <h4 style={{ margin: '18px 0 8px' }}>Lajes nervuradas (§13.2.4.2 — por nervura)</h4>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Laje</th>
+                <th>Pavimento</th>
+                <th>lx×ly (m)</th>
+                <th>h/capa (cm)</th>
+                <th>Md nervura A/B (kN·m)</th>
+                <th>Barras/nervura A/B</th>
+                <th>VSd/VRd1 A (kN)</th>
+                <th>Estribo</th>
+                <th>Flecha (mm)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nervuradas.map((s) => {
+                const rd = s.ribbedDesign
+                const title = s.notes.length > 0 ? s.notes.join(' · ') : undefined
+                return (
+                  <tr key={s.slabId} title={title}>
+                    <td style={{ fontWeight: 600 }}>{s.name}</td>
+                    <td style={{ fontFamily: 'var(--sans)' }}>{s.levelName}</td>
+                    <td>
+                      {fmt(s.spanA, 2)}×{fmt(s.spanB, 2)}
+                    </td>
+                    {rd ? (
+                      <>
+                        <td>
+                          {fmtCmDim(s.thickness)}/{fmtCmDim(rd.geometry.topping)}
+                        </td>
+                        <td>
+                          {fmt(rd.dirA.mRibSpan, 1)} / {fmt(rd.dirB.mRibSpan, 1)}
+                        </td>
+                        <td>
+                          {rd.dirA.ribBars} / {rd.dirB.ribBars}
+                        </td>
+                        <td>
+                          {fmt(rd.dirA.vRib, 1)}/{fmt(rd.dirA.vrd1, 1)}
+                        </td>
+                        <td>{rd.dirA.stirrup ?? rd.dirB.stirrup ?? 'dispensado'}</td>
+                        <td>
+                          <span className={`chip ${rd.deflectionOk ? 'ok' : 'err'}`}>
+                            {fmt(rd.deflection * 1000, 1)} {rd.deflectionOk ? '≤' : '>'}{' '}
+                            {fmt(rd.deflectionLimit * 1000, 1)}
+                          </span>
+                        </td>
+                      </>
+                    ) : (
+                      <td colSpan={7} className="faint">
+                        manual — laje não retangular
+                      </td>
+                    )}
+                    <td>
+                      <StatusChip s={s.status} />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <Footnote>
+            Peso próprio real (capa + nervuras + enchimento); momentos de Marcus × espaçamento =
+            momento por nervura; positivo como seção T (bloco na capa verificado); cisalhamento sem
+            estribos quando l0 ≤ 65 cm e VSd ≤ VRd1 (§19.4.1).
+          </Footnote>
+        </>
+      )}
+
+      {macicas.length > 0 && (
+        <Footnote>
+          Marcus sem redução por torção (a favor da segurança); flecha com Branson + fluência
+          (αf=1,32).
+        </Footnote>
+      )}
     </>
   )
 }
@@ -763,6 +843,7 @@ function FundacoesTab({ results, project }: { results: AnalysisResults; project:
   const soil = project.settings.soil
   const fnd = project.settings.foundation
   const usePiles = fnd.type === 'estacas'
+  const useCaissons = fnd.type === 'tubulao'
 
   return (
     <>
@@ -781,6 +862,11 @@ function FundacoesTab({ results, project }: { results: AnalysisResults; project:
             Estacas: <strong>{fnd.pileLabel}</strong> — φ {fmtCmDim(fnd.pileDiameter)} cm ·{' '}
             {fmt(fnd.pileCapacity, 0)} kN/estaca · e = {fmt(fnd.pileSpacingFactor, 1)}φ
           </span>
+        ) : useCaissons ? (
+          <span>
+            Tubulões: σadm base = {fmt(soil.sigmaAdm, 0)} kPa · σ fuste ={' '}
+            {fmt(fnd.caissonSigmaConcrete ?? 5000, 0)} kPa · prof. {fmt(fnd.pileLength ?? 10, 1)} m
+          </span>
         ) : (
           <span>
             Solo: <strong>{soil.label}</strong> — σadm = {fmt(soil.sigmaAdm, 0)} kPa
@@ -793,6 +879,45 @@ function FundacoesTab({ results, project }: { results: AnalysisResults; project:
 
       {items.length === 0 ? (
         <Empty text="Nenhuma fundação dimensionada." />
+      ) : useCaissons ? (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Pilar</th>
+              <th>Nserv (kN)</th>
+              <th>Fuste ø (m)</th>
+              <th>Base ø (m)</th>
+              <th>H base (m)</th>
+              <th>σ fuste (kPa)</th>
+              <th>σ base (kPa)</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((f) => {
+              const cs = f.caisson
+              if (!cs) return null
+              return (
+                <tr key={f.columnId} title={cs.notes.join(' · ') || undefined}>
+                  <td style={{ fontWeight: 600 }}>{f.name}</td>
+                  <td>{fmt(f.nServ, 0)}</td>
+                  <td>{fmt(cs.shaftD, 2)}</td>
+                  <td>{fmt(cs.baseD, 2)}</td>
+                  <td>{fmt(cs.baseH, 2)}</td>
+                  <td>
+                    {fmt(cs.sigmaShaft, 0)} ≤ {fmt(fnd.caissonSigmaConcrete ?? 5000, 0)}
+                  </td>
+                  <td>
+                    {fmt(cs.sigmaBase, 0)} ≤ {fmt(soil.sigmaAdm, 0)}
+                  </td>
+                  <td>
+                    <StatusChip s={f.status} />
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       ) : usePiles ? (
         <table className="table">
           <thead>
@@ -889,7 +1014,9 @@ function FundacoesTab({ results, project }: { results: AnalysisResults; project:
       <Footnote>
         {usePiles
           ? 'Blocos rígidos sobre estacas — método das bielas (Blévot): tirantes sobre as estacas, verificação de esmagamento das bielas no pilar e nas estacas (α entre 45° e 55°).'
-          : 'Sapatas rígidas isoladas — armadura pelo método das bielas (CG do pilar), tensões de serviço com excentricidade (NBR 6118 §22.6 + NBR 6122).'}
+          : useCaissons
+            ? 'Tubulões a céu aberto: fuste em concreto não armado pela tensão admissível do concreto; base alargada pela σadm do solo, rasante 60° (NBR 6122 — altura da base ≤ 1,8 m sem escoramento).'
+            : 'Sapatas rígidas isoladas — armadura pelo método das bielas (CG do pilar), tensões de serviço com excentricidade (NBR 6118 §22.6 + NBR 6122).'}
       </Footnote>
 
       {results.soilInteraction.enabled && results.soilInteraction.items.length > 0 && (

@@ -66,12 +66,38 @@ export function runFireCheck(
 
   // ------------------------------------------------------------------ lajes
   for (const sd of slabDesign) {
-    const hMm = sd.thickness * 1000
     const c1 = (cover.slab + 0.004) * 1000 // eixo da malha (φ8/2)
     const lambda =
       sd.rectangular && Math.min(sd.spanA, sd.spanB) > 0.01
         ? Math.max(sd.spanA, sd.spanB) / Math.min(sd.spanA, sd.spanB)
         : 2.5 // não retangular: trata como armada em uma direção (conservador)
+    if (sd.kind === 'nervurada' && sd.ribbedDesign) {
+      // simplificação conservadora: verifica o isolamento com a espessura
+      // MÉDIA de concreto (capa + nervuras rateadas) como laje unidirecional
+      const rd = sd.ribbedDesign
+      const rSlab = checkSlabFire(
+        Math.max(rd.geometry.concreteThickness * 1000, 40),
+        c1,
+        trrf,
+        lambda,
+        false,
+      )
+      items.push({
+        element: `Laje ${sd.name} (${sd.levelName}) — capa`,
+        kind: 'laje',
+        dim: Math.round(rd.geometry.concreteThickness * 1000),
+        dimRequired: rSlab.hMin,
+        c1,
+        c1Required: rSlab.c1Required,
+        ok: rSlab.ok,
+        notes: [
+          ...rSlab.notes,
+          'Nervurada: espessura média de concreto usada p/ isolamento (conservador vs tab. 10/11 da NBR 15200).',
+        ],
+      })
+      continue
+    }
+    const hMm = sd.thickness * 1000
     const continuous =
       sd.design !== null && sd.design.dirA.fixedEnds + sd.design.dirB.fixedEnds > 0
     const r = checkSlabFire(hMm, c1, trrf, lambda, continuous)

@@ -580,7 +580,7 @@ export function buildMemorialPdf(
   )
 
   // ---------------------------------------------------------------- 9. lajes
-  L.h1('9. Lajes maciças (método de Marcus)')
+  L.h1('9. Lajes (Marcus — maciças e nervuradas)')
   L.table(
     [
       { t: 'Laje', w: 16 },
@@ -594,12 +594,12 @@ export function buildMemorialPdf(
       { t: 'Status', w: 11, align: 'c' },
     ],
     results.slabDesign.map((s) => [
-      s.name,
+      s.kind === 'nervurada' ? `${s.name} (nerv.)` : s.name,
       s.levelName,
       cmDim(s.thickness),
       s.rectangular ? `${fmt(s.spanA, 2)}×${fmt(s.spanB, 2)}` : 'não ret.',
-      s.design?.dirA.spanSpec ?? 'manual',
-      s.design?.dirB.spanSpec ?? '—',
+      s.design?.dirA.spanSpec ?? (s.ribbedDesign ? `${s.ribbedDesign.dirA.ribBars}/nerv.` : 'manual'),
+      s.design?.dirB.spanSpec ?? (s.ribbedDesign ? `${s.ribbedDesign.dirB.ribBars}/nerv.` : '—'),
       s.design
         ? [
             s.design.dirA.mSupportD > 0 ? `A: ${s.design.dirA.supportSpec}` : '',
@@ -607,12 +607,32 @@ export function buildMemorialPdf(
           ]
             .filter(Boolean)
             .join(' · ') || '—'
-        : '—',
-      s.design ? (s.design.deflectionOk ? 'OK' : 'excede') : '—',
+        : s.ribbedDesign
+          ? s.ribbedDesign.dirA.stirrup ?? 'estribo disp.'
+          : '—',
+      s.design
+        ? s.design.deflectionOk
+          ? 'OK'
+          : 'excede'
+        : s.ribbedDesign
+          ? s.ribbedDesign.deflectionOk
+            ? 'OK'
+            : 'excede'
+          : '—',
       STATUS_TXT[s.status],
     ]),
     7.0,
   )
+  if (results.slabDesign.some((s) => s.kind === 'nervurada')) {
+    L.para(
+      'Nervuradas (§13.2.4.2): peso próprio real (capa + nervuras + enchimento); momento por ' +
+        'nervura = Marcus × espaçamento, positivo como seção T (bloco na capa verificado); ' +
+        'cisalhamento sem estribos quando l0 ≤ 65 cm e VSd ≤ VRd1 (§19.4.1).',
+      7.8,
+      'I',
+      0.3,
+    )
+  }
 
   // -------------------------------------------------------------- 10. escadas
   if (results.stairDesign.length > 0) {
@@ -697,13 +717,46 @@ export function buildMemorialPdf(
 
   // ------------------------------------------------------------ 12. fundações
   const usePiles = st.foundation.type === 'estacas'
-  L.h1(`12. Fundações — ${usePiles ? 'blocos sobre estacas (Blévot)' : 'sapatas rígidas'}`)
+  const useCaissons = st.foundation.type === 'tubulao'
+  L.h1(
+    `12. Fundações — ${usePiles ? 'blocos sobre estacas (Blévot)' : useCaissons ? 'tubulões a céu aberto' : 'sapatas rígidas'}`,
+  )
   L.para(
     usePiles
       ? `Estacas ${st.foundation.pileLabel}: Ø ${cmDim(st.foundation.pileDiameter)} cm · carga admissível ${fmt(st.foundation.pileCapacity, 0)} kN · espaçamento ${fmt(st.foundation.pileSpacingFactor, 1)}Ø. Valores geotécnicos orientativos — exigem laudo (NBR 6122).`
-      : `Solo: ${st.soil.label} — σadm = ${fmt(st.soil.sigmaAdm, 0)} kPa (orientativo — exige sondagem SPT, NBR 6122).`,
+      : useCaissons
+        ? `Tubulões: σadm da base = ${fmt(st.soil.sigmaAdm, 0)} kPa · σ concreto do fuste = ${fmt(st.foundation.caissonSigmaConcrete ?? 5000, 0)} kPa · profundidade ${fmt(st.foundation.pileLength ?? 10, 1)} m. Fuste não armado; base alargada com rasante 60° (NBR 6122).`
+        : `Solo: ${st.soil.label} — σadm = ${fmt(st.soil.sigmaAdm, 0)} kPa (orientativo — exige sondagem SPT, NBR 6122).`,
   )
-  if (usePiles) {
+  if (useCaissons) {
+    L.table(
+      [
+        { t: 'Pilar', w: 11 },
+        { t: 'Nserv (kN)', w: 14, align: 'r' },
+        { t: 'Fuste Ø (m)', w: 14, align: 'r' },
+        { t: 'Base Ø (m)', w: 14, align: 'r' },
+        { t: 'H base (m)', w: 13, align: 'r' },
+        { t: 'σ fuste (kPa)', w: 16, align: 'r' },
+        { t: 'σ base (kPa)', w: 15, align: 'r' },
+        { t: 'Status', w: 11, align: 'c' },
+      ],
+      results.foundations.map((f) => {
+        const cs = f.caisson
+        if (!cs) return [f.name, fmt(f.nServ, 0), '—', '—', '—', '—', '—', '—']
+        return [
+          f.name,
+          fmt(f.nServ, 0),
+          fmt(cs.shaftD, 2),
+          fmt(cs.baseD, 2),
+          fmt(cs.baseH, 2),
+          fmt(cs.sigmaShaft, 0),
+          fmt(cs.sigmaBase, 0),
+          STATUS_TXT[f.status],
+        ]
+      }),
+      7.0,
+    )
+  } else if (usePiles) {
     L.table(
       [
         { t: 'Pilar', w: 11 },

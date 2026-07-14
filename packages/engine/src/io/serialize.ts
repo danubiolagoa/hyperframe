@@ -13,7 +13,7 @@ export function serializeProject(project: Project): string {
   const file: ProjectFile = {
     magic: MAGIC,
     schemaVersion: 1,
-    savedWith: 'HyperFrame 0.2.2',
+    savedWith: 'HyperFrame 0.2.3',
     project,
   }
   return JSON.stringify(file, null, 2)

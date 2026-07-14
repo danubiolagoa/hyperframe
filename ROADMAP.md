@@ -95,6 +95,49 @@
   elemento apontado
 - [x] Bordas livres de laje: quinhão redistribuído às bordas apoiadas (força conservada)
 
+## v0.2.3 — Primeira fatia da paridade CypeCAD ✅ (entregue)
+
+- [x] **Lajes nervuradas** moldadas in loco (bi/unidirecionais): peso próprio real
+  (capa + nervuras + enchimento com presets), geometria §13.2.4.2, dimensionamento por
+  nervura (Marcus × espaçamento, seção T com bloco verificado na capa), cisalhamento
+  como laje (§19.4.1, dispensa de estribo p/ l0 ≤ 65 cm) ou como viga, flecha com
+  inércia da seção T + Branson, incêndio simplificado, quantitativos com volume real
+- [x] **Tubulões a céu aberto** (3º tipo de fundação): fuste não armado pela tensão do
+  concreto, base alargada pela σadm com rasante 60°, limites executivos da NBR 6122,
+  molas de ISS pela base equivalente
+- [x] **Punção §19.5** (módulo verificado c/ âncoras — núcleo do futuro módulo de lajes
+  lisas): contornos C/C′, τRd2/τRd1, pilares retangulares e circulares internos
+- [x] Consistência aponta **laje lisa não modelada** (pilar interno sem viga) e
+  **pilar-parede** (b/h ≥ 5 — §15.9)
+
+## Paridade com o CypeCAD — mapa de módulos e fases
+
+> Referência: lista de módulos do CypeCAD (multiplus.com) + recursos do pacote.
+> Estado em v0.2.3 e fase planejada p/ cada lacuna.
+
+| Módulo CypeCAD | HyperFrame hoje | Fase |
+|---|---|---|
+| Núcleo (modelagem, normas, análise) | ✅ pórtico 3D + NBR 6118/6120/6123/8681 | — |
+| Pilares de concreto (ret./circ./seção genérica) | ✅ ret., circular, L (0–270°) | seções poligonais genéricas → v0.4 |
+| Pilares-parede (MEF) | ⚠️ barra + aviso §15.9 | cascas/pórtico equivalente → v0.4 |
+| Pilares metálicos / mistos / madeira | ❌ | NBR 8800 (aço) → v0.4 · mistos/NBR 7190 → v1.x |
+| Vigas de concreto | ✅ flexão/corte/torção/pele/furos | — |
+| Vigas metálicas e mistas | ❌ | NBR 8800 + conectores → v0.4 |
+| Lajes maciças | ✅ Marcus + flechas + ELS-W | grelha própria → v0.3 |
+| Lajes nervuradas | ✅ v0.2.3 (in loco, bi/uni) | vigotas/treliçadas → v0.5 |
+| Lajes cogumelo/lisas | ⚠️ punção §19.5 pronta | pórtico equivalente §14.7.8 → v0.5 |
+| Lajes alveolares / steel-deck | ❌ | catálogos de fornecedores → v1.x |
+| Protensão (lajes) | ❌ | perdas + eq. de carga + hiperestático → v1.x |
+| Sapatas | ✅ rígidas c/ excentricidade | associadas/corridas → v0.5 |
+| Blocos sobre estacas | ✅ Blévot 1–5 | ≥ 6 estacas (CEB) → v0.5 |
+| Tubulões | ✅ v0.2.3 | — |
+| Radier / vigas sobre apoio elástico | ⚠️ molas nodais prontas no solver | baldrames Winkler → v0.3 · radier (placa) → v1.x |
+| Interação solo-estrutura | ✅ SPT → CRV/CRH + recalques | molas por camada em estacas → v0.5 |
+| Fundação + superestrutura integrada | ✅ 2 passes c/ molas | baldrames/travamentos → v0.3 |
+| Cortinas e reservatórios enterrados | ⚠️ reservatórios elevados | empuxo de terra → v0.5 |
+| Lançamento automático BIM/IFC | ⚠️ underlay DXF | import/export IFC → v1.0 |
+| Cargas de paredes (BIM) | ✅ manuais (inteiras/por trecho) | do IFC → v1.0 |
+
 ## v0.3 — Beta fechado (2–3 meses)
 
 - [ ] 10–15 calculistas convidados; telemetria de erros (opt-in) e feedback in-app

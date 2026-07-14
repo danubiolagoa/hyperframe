@@ -3,9 +3,9 @@
 Software estrutural só tem valor se merecer confiança. Este documento define como o
 HyperFrame é validado — e o que ainda falta antes de uso em projeto real.
 
-## Estado atual (v0.2.2)
+## Estado atual (v0.2.3)
 
-### Validação automatizada (roda em `npm test` — 244 testes)
+### Validação automatizada (roda em `npm test` — 266 testes)
 
 **Âncoras analíticas (soluções fechadas):**
 - Matriz de rigidez local 12×12: simetria, termos EA/L e 12EI/L³
@@ -92,6 +92,22 @@ HyperFrame é validado — e o que ainda falta antes de uso em projeto real.
   com seção, cotas de pé-direito), planta de cargas (G/Q/ELU por pilar + tabela),
   prancha A0–A4 com moldura/carimbo (dimensões exatas do papel, escala automática
   padronizada, conteúdo dentro da moldura, campos preenchidos)
+
+**Módulos v0.2.3 (fatia CypeCAD — âncoras à mão):**
+- Nervuradas: fração de nervuras bw(2s−bw)/s² e peso próprio fechado (h25/capa5/bw10/s50
+  → 0,122 m³/m² = 3,05 kN/m²); enchimento somando o volume real; checagens §13.2.4.2
+  (nervura ≥ 5, capa ≥ max(4; l0/15)); VRd1 de laje (§19.4.1) por fórmula; momento por
+  nervura = Marcus × espaçamento (âncora fechada na laje 5×5); bloco na capa; dispensa
+  de estribo; unidirecional carrega só a direção das nervuras; análise completa do
+  edifício exemplo com todas as lajes nervuradas
+- Tubulões: fuste mínimo 0,70 m e por tensão do concreto (√(4N/πσ)); base por σadm com
+  arredondamento de 5 cm; rasante 60° fechada; alerta p/ base > 1,80 m; análise completa
+  + molas de ISS pela base equivalente
+- Punção §19.5: u0/u1 (ret. e circular), τSd nos contornos, τRd2 = 0,27·αv·fcd e
+  τRd1 = 0,13(1+√(20/d))(100ρfck)^{1/3} — âncora integral à mão (pilar 40×40, d=16:
+  τRd1 = 794 kPa < τSd1 = 1384 kPa ⇒ exige armadura)
+- Consistência: pilar interno à laje sem viga (laje lisa não modelada) e pilar-parede
+  (b/h ≥ 5) apontados
 
 ### O que os testes NÃO cobrem ainda
 

@@ -3,6 +3,7 @@ import type { SlabDesignResultItem } from '../analysis/types'
 import { dist, projectOnSegment } from '../geometry/geometry'
 import { concreteProps, coverFor, fyd as fydOf } from '../nbr/nbr6118/materials'
 import { designSlab, type EdgeCondition } from '../nbr/nbr6118/slabDesign'
+import { designRibbedSlab, ribbedSelfWeight } from '../nbr/nbr6118/ribbedSlab'
 import { slabExtraLoads, slabOpeningsArea } from '../analysis/buildModel'
 import { polygonArea } from '../geometry/geometry'
 
@@ -75,6 +76,7 @@ export function runSlabDesign(project: Project): SlabDesignResultItem[] {
           `Furo/abertura de ${(100 * ratio).toFixed(0)}% da área — o método de Marcus não considera aberturas; prever reforço nas bordas do furo (verificação manual).`,
         )
       }
+      const kind = slab.ribbed ? 'nervurada' : 'macica'
       if (!rect) {
         out.push({
           slabId: slab.id,
@@ -84,7 +86,9 @@ export function runSlabDesign(project: Project): SlabDesignResultItem[] {
           spanB: 0,
           thickness: slab.thickness,
           rectangular: false,
+          kind,
           design: null,
+          ribbedDesign: null,
           status: 'atencao',
           notes: [...notes, 'Laje não retangular — dimensionar manualmente (método de Marcus não se aplica).'],
         })
@@ -100,11 +104,56 @@ export function runSlabDesign(project: Project): SlabDesignResultItem[] {
       const fixedA = ((cont[1] ? 1 : 0) + (cont[3] ? 1 : 0)) as EdgeCondition
       const fixedB = ((cont[0] ? 1 : 0) + (cont[2] ? 1 : 0)) as EdgeCondition
 
+      const gSelf = slab.ribbed
+        ? ribbedSelfWeight(slab.thickness, slab.ribbed, project.settings.concreteUnitWeight)
+        : slab.thickness * project.settings.concreteUnitWeight
+
+      if (slab.ribbed) {
+        const ribbedDesign = designRibbedSlab({
+          a: { span: spanA, fixedEnds: fixedA },
+          b: { span: spanB, fixedEnds: fixedB },
+          h: slab.thickness,
+          ribbed: slab.ribbed,
+          g: gSelf + slab.finishLoad + extras.g,
+          q: slab.liveLoad + extras.q,
+          psi2: project.settings.psiLive.psi2,
+          cover,
+          fcd: cp.fcd,
+          fck: cp.fck,
+          fyd: fydV,
+          fctm: cp.fctm,
+          fctd: cp.fctd,
+          ecs: cp.ecs,
+          fywk: project.settings.steel.fyk,
+          gammaC: project.settings.concreteUnitWeight,
+        })
+        const geomOk = ribbedDesign.geometry.checks.every((c) => c.ok)
+        let status: SlabDesignResultItem['status'] = 'ok'
+        if (!ribbedDesign.dirA.ok || !ribbedDesign.dirB.ok || !geomOk) status = 'falha'
+        else if (!ribbedDesign.deflectionOk || openWarn || ribbedDesign.geometry.asTBeams)
+          status = 'atencao'
+        out.push({
+          slabId: slab.id,
+          name: slab.name,
+          levelName: level.name,
+          spanA,
+          spanB,
+          thickness: slab.thickness,
+          rectangular: true,
+          kind,
+          design: null,
+          ribbedDesign,
+          status,
+          notes: [...notes, ...ribbedDesign.notes],
+        })
+        continue
+      }
+
       const design = designSlab({
         a: { span: spanA, fixedEnds: fixedA },
         b: { span: spanB, fixedEnds: fixedB },
         thickness: slab.thickness,
-        g: slab.thickness * project.settings.concreteUnitWeight + slab.finishLoad + extras.g,
+        g: gSelf + slab.finishLoad + extras.g,
         q: slab.liveLoad + extras.q,
         psi2: project.settings.psiLive.psi2,
         cover,
@@ -127,7 +176,9 @@ export function runSlabDesign(project: Project): SlabDesignResultItem[] {
         spanB,
         thickness: slab.thickness,
         rectangular: true,
+        kind,
         design,
+        ribbedDesign: null,
         status,
         notes: [...notes, ...design.notes],
       })

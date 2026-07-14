@@ -400,14 +400,64 @@ export default function SettingsModal() {
                 value={st.foundation.type}
                 onChange={(e) =>
                   updateSettings({
-                    foundation: { ...st.foundation, type: e.target.value as 'sapata' | 'estacas' },
+                    foundation: {
+                      ...st.foundation,
+                      type: e.target.value as 'sapata' | 'estacas' | 'tubulao',
+                    },
                   })
                 }
               >
                 <option value="sapata">Sapatas rígidas isoladas (fundação direta)</option>
                 <option value="estacas">Blocos sobre estacas (método das bielas — Blévot)</option>
+                <option value="tubulao">Tubulões a céu aberto (base alargada)</option>
               </select>
             </div>
+
+            {st.foundation.type === 'tubulao' && (
+              <div className="field-row">
+                <div className="field">
+                  <label className="label">σadm do solo na base (kPa)</label>
+                  <NumberField
+                    value={st.soil.sigmaAdm}
+                    digits={0}
+                    min={50}
+                    max={5000}
+                    style={{ width: '100%' }}
+                    onCommit={(v) =>
+                      updateSettings({ soil: { ...st.soil, sigmaAdm: v, label: 'Personalizado' } })
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label className="label">σ concreto do fuste (kPa)</label>
+                  <NumberField
+                    value={st.foundation.caissonSigmaConcrete ?? 5000}
+                    digits={0}
+                    min={2000}
+                    max={12000}
+                    style={{ width: '100%' }}
+                    onCommit={(v) =>
+                      updateSettings({
+                        foundation: { ...st.foundation, caissonSigmaConcrete: v },
+                      })
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label className="label">Profundidade (m)</label>
+                  <NumberField
+                    value={st.foundation.pileLength ?? 10}
+                    digits={1}
+                    min={2}
+                    max={40}
+                    style={{ width: '100%' }}
+                    onCommit={(v) =>
+                      updateSettings({ foundation: { ...st.foundation, pileLength: v } })
+                    }
+                  />
+                </div>
+              </div>
+            )}
 
             {st.foundation.type === 'sapata' ? (
               <div className="field-row">
@@ -448,7 +498,7 @@ export default function SettingsModal() {
                   />
                 </div>
               </div>
-            ) : (
+            ) : st.foundation.type === 'estacas' ? (
               <>
                 <div className="field">
                   <label className="label">Tipo de estaca (aplica φ e carga usuais)</label>
@@ -559,7 +609,7 @@ export default function SettingsModal() {
                   </div>
                 </div>
               </>
-            )}
+            ) : null}
             <Note>
               Valores geotécnicos orientativos — o projeto executivo exige sondagem SPT e laudo
               geotécnico (NBR 6122).

@@ -109,6 +109,20 @@ export {
   type OpeningCondition,
 } from './nbr/nbr6118/beamOpenings'
 export {
+  designRibbedSlab,
+  ribbedGeometry,
+  ribbedSelfWeight,
+  ribFraction,
+  slabShearVrd1,
+  pickRibBars,
+  type RibbedDesignInput,
+  type RibbedDesignOutput,
+  type RibbedDirectionResult,
+  type RibbedGeometryInfo,
+} from './nbr/nbr6118/ribbedSlab'
+export { checkPunching, type PunchingInput, type PunchingOutput } from './nbr/nbr6118/punching'
+export { designCaisson, type CaissonInput, type CaissonResult } from './nbr/nbr6122/caisson'
+export {
   soilModulus,
   averageModulus,
   pileCapacityAokiVelloso,

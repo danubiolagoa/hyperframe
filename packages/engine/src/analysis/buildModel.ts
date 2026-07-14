@@ -1,5 +1,6 @@
 import type { FloorPlan, Project, SectionRect, Slab, Vec2 } from '../model/types'
 import { columnSectionInfo, columnWorldDirs } from '../model/columnSection'
+import { ribbedSelfWeight } from '../nbr/nbr6118/ribbedSlab'
 import {
   TOL,
   bbox,
@@ -419,7 +420,10 @@ export function buildAnalysisModel(project: Project): {
           )}% da área — verifique o modelo.`,
         )
       }
-      const gArea = (slab.thickness * γ + slab.finishLoad) * netFactor + extras.g // kN/m²
+      const gSelf = slab.ribbed
+        ? ribbedSelfWeight(slab.thickness, slab.ribbed, γ)
+        : slab.thickness * γ
+      const gArea = (gSelf + slab.finishLoad) * netFactor + extras.g // kN/m²
       const qArea = slab.liveLoad * netFactor + extras.q
       levelG[li] += gArea * area
       levelQ[li] += qArea * area

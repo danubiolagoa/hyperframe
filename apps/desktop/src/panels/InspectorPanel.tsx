@@ -4,6 +4,8 @@ import {
   FINISH_LOAD_PRESETS,
   LIVE_LOAD_PRESETS,
   REGION_PRESETS,
+  RIBBED_DEFAULTS,
+  RIBBED_FILLER_PRESETS,
   STAIR_DEFAULTS,
   TANK_DEFAULTS,
   WALL_PRESETS,
@@ -1054,6 +1056,128 @@ function SlabInspector({ slab }: { slab: Slab }) {
       </div>
 
       <Row label="Área" value={`${fmt(area, 2)} m²`} />
+
+      <div className="field" style={{ marginTop: 10 }}>
+        <label className="label">Tipo de laje</label>
+        <select
+          className="select"
+          style={{ width: '100%' }}
+          value={slab.ribbed ? 'nervurada' : 'macica'}
+          onChange={(e) =>
+            updateSlab(slab.id, {
+              ribbed:
+                e.target.value === 'nervurada'
+                  ? { ...RIBBED_DEFAULTS }
+                  : undefined,
+              thickness: e.target.value === 'nervurada' ? Math.max(slab.thickness, 0.2) : slab.thickness,
+            })
+          }
+        >
+          <option value="macica">Maciça</option>
+          <option value="nervurada">Nervurada (moldada in loco)</option>
+        </select>
+      </div>
+
+      {slab.ribbed && (
+        <>
+          <div className="field">
+            <label className="label">Nervuras: direções</label>
+            <select
+              className="select"
+              style={{ width: '100%' }}
+              value={slab.ribbed.dirs}
+              onChange={(e) =>
+                updateSlab(slab.id, {
+                  ribbed: { ...slab.ribbed!, dirs: e.target.value as 'xy' | 'x' | 'y' },
+                })
+              }
+            >
+              <option value="xy">Bidirecional (X e Y)</option>
+              <option value="x">Unidirecional — vencem em X</option>
+              <option value="y">Unidirecional — vencem em Y</option>
+            </select>
+          </div>
+          <div className="field">
+            <label className="label">bw nervura · espaçamento (cm)</label>
+            <div className="field-row">
+              <NumberField
+                value={cm(slab.ribbed.ribWidth)}
+                digits={0}
+                min={5}
+                max={30}
+                onCommit={(v) =>
+                  updateSlab(slab.id, { ribbed: { ...slab.ribbed!, ribWidth: v / 100 } })
+                }
+              />
+              <NumberField
+                value={cm(slab.ribbed.spacing)}
+                digits={0}
+                min={20}
+                max={150}
+                onCommit={(v) =>
+                  updateSlab(slab.id, { ribbed: { ...slab.ribbed!, spacing: v / 100 } })
+                }
+              />
+            </div>
+          </div>
+          <div className="field">
+            <label className="label">Capa (cm) · enchimento (kN/m³)</label>
+            <div className="field-row">
+              <NumberField
+                value={cm(slab.ribbed.topping)}
+                digits={1}
+                min={4}
+                max={15}
+                onCommit={(v) =>
+                  updateSlab(slab.id, { ribbed: { ...slab.ribbed!, topping: v / 100 } })
+                }
+              />
+              <NumberField
+                value={slab.ribbed.fillerWeight}
+                digits={2}
+                min={0}
+                max={15}
+                onCommit={(v) =>
+                  updateSlab(slab.id, { ribbed: { ...slab.ribbed!, fillerWeight: v } })
+                }
+              />
+            </div>
+            <select
+              className="select"
+              style={{ width: '100%', marginTop: 6 }}
+              value={
+                RIBBED_FILLER_PRESETS.find(
+                  (p) => Math.abs(p.weight - slab.ribbed!.fillerWeight) < 1e-9,
+                )?.label ?? 'custom'
+              }
+              onChange={(e) => {
+                const p = RIBBED_FILLER_PRESETS.find((x) => x.label === e.target.value)
+                if (p)
+                  updateSlab(slab.id, {
+                    ribbed: { ...slab.ribbed!, fillerWeight: p.weight, label: p.label },
+                  })
+              }}
+            >
+              {!RIBBED_FILLER_PRESETS.some(
+                (p) => Math.abs(p.weight - slab.ribbed!.fillerWeight) < 1e-9,
+              ) && (
+                <option value="custom" disabled>
+                  Personalizado — {fmt(slab.ribbed!.fillerWeight, 2)} kN/m³
+                </option>
+              )}
+              {RIBBED_FILLER_PRESETS.map((p) => (
+                <option key={p.label} value={p.label}>
+                  {p.label} — {fmt(p.weight, 2)} kN/m³
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="faint" style={{ fontSize: 10.5 }}>
+            Espessura acima = altura TOTAL (capa + nervura). Peso próprio real (capa + nervuras +
+            enchimento) entra na análise; dimensionamento por nervura (seção T) — §13.2.4.2.
+          </div>
+        </>
+      )}
 
       <DeleteButton onClick={() => deleteElement({ kind: 'slab', id: slab.id })} />
     </>

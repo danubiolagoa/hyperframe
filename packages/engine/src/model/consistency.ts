@@ -1,5 +1,5 @@
 import type { ElementRef, Project } from '../model/types'
-import { dist, polygonArea, projectOnSegment, TOL } from '../geometry/geometry'
+import { dist, pointInPolygon, polygonArea, projectOnSegment, TOL } from '../geometry/geometry'
 import { columnSectionInfo } from './columnSection'
 
 /**
@@ -67,6 +67,14 @@ export function checkConsistency(project: Project): ConsistencyIssue[] {
         kind: 'column',
         id: col.id,
       })
+    }
+    // pilar-parede (§13.2.3 / §15.9): b/h ≥ 5 — tratado como barra
+    if (info.kind === 'rect' && Math.max(info.bu, info.bv) / Math.max(info.minDim, 0.01) >= 5) {
+      push(
+        'leve',
+        `Pilar ${col.name}: relação lados ≥ 5 — pilar-parede; dimensionado como barra (verificação por lâminas §15.9 no roadmap).`,
+        { kind: 'column', id: col.id },
+      )
     }
     // nasce fora da fundação: precisa de viga sob o ponto
     if (iBase > 0) {
@@ -187,11 +195,38 @@ export function checkConsistency(project: Project): ConsistencyIssue[] {
           id: slab.id,
         }, where)
       }
-      if (slab.thickness < 0.07) {
+      if (!slab.ribbed && slab.thickness < 0.07) {
         push('media', `Laje ${slab.name} (${where}): h = ${(slab.thickness * 100).toFixed(0)} cm < 7 cm (mínimo usual §13.2.4.1).`, {
           kind: 'slab',
           id: slab.id,
         }, where)
+      }
+      if (slab.ribbed && slab.thickness <= slab.ribbed.topping + 0.02) {
+        push('media', `Laje ${slab.name} (${where}): altura total ≤ capa + 2 cm — nervura inexistente.`, {
+          kind: 'slab',
+          id: slab.id,
+        }, where)
+      }
+      // laje lisa/cogumelo: pilar interno à laje sem viga no ponto
+      if (inUse) {
+        for (const col of project.columns) {
+          if (!pointInPolygon(col.pos, slab.polygon)) continue
+          const onBeam = plan.beams.some((b) => {
+            for (let i = 0; i + 1 < b.path.length; i++) {
+              const { d } = projectOnSegment(col.pos, b.path[i], b.path[i + 1])
+              if (d <= TOL * 2) return true
+            }
+            return false
+          })
+          if (!onBeam) {
+            push(
+              'media',
+              `Pilar ${col.name} interno à laje ${slab.name} (${where}) sem viga — laje lisa/cogumelo (punção §19.5 e pórtico equivalente) ainda não modelada; a carga da laje NÃO chega ao pilar por este caminho.`,
+              { kind: 'column', id: col.id },
+              where,
+            )
+          }
+        }
       }
     }
 

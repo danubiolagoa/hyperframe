@@ -23,6 +23,7 @@ import { runFireCheck } from './design/fireRun'
 import { runOpeningChecks } from './design/openingsRun'
 import { footingSprings, pileCapSprings } from './geotech/soil'
 import { columnSectionInfo } from './model/columnSection'
+import { ribbedGeometry } from './nbr/nbr6118/ribbedSlab'
 import type {
   AnalysisResults,
   BeamSpanDesign,
@@ -247,15 +248,18 @@ function assignFoundationSprings(
     const springs =
       f.kind === 'sapata' && f.footing
         ? footingSprings(f.footing.a, f.footing.b, params, aAlongX)
-        : f.pileCap
-          ? pileCapSprings(
-              f.pileCap.nPiles,
-              f.pileCap.e,
-              project.settings.foundation,
-              params,
-              aAlongX,
-            )
-          : null
+        : f.kind === 'tubulao' && f.caisson
+          ? // base circular ≈ quadrado de área equivalente (lado 0,886·D)
+            footingSprings(0.886 * f.caisson.baseD, 0.886 * f.caisson.baseD, params, aAlongX)
+          : f.pileCap
+            ? pileCapSprings(
+                f.pileCap.nPiles,
+                f.pileCap.e,
+                project.settings.foundation,
+                params,
+                aAlongX,
+              )
+            : null
     if (!springs) continue
     node.springs = [springs.kh, springs.kh, springs.kv, springs.krx, springs.kry, springs.krz]
     assigned++
@@ -904,9 +908,12 @@ function computeQuantities(
           return s + (p.x * q.y - q.x * p.y)
         }, 0) / 2,
       )
-      // furos/aberturas não têm concreto nem fôrma
+      // furos/aberturas não têm concreto nem fôrma; nervurada usa o volume real
       const net = Math.max(area - slabOpeningsArea(plan, slab), 0)
-      volSlabs += net * slab.thickness
+      const tConcrete = slab.ribbed
+        ? ribbedGeometry(slab.thickness, slab.ribbed).concreteThickness
+        : slab.thickness
+      volSlabs += net * tConcrete
       formwork += net
       slabAreaTotal += net
     }
@@ -928,9 +935,11 @@ function computeQuantities(
   }
   const slabPlanOf = new Map<string, string>()
   const slabAreaOf = new Map<string, number>()
+  const slabById = new Map<string, Project['plans'][number]['slabs'][number]>()
   for (const plan of project.plans) {
     for (const s of plan.slabs) {
       slabPlanOf.set(s.id, plan.id)
+      slabById.set(s.id, s)
       slabAreaOf.set(
         s.id,
         Math.abs(
@@ -949,6 +958,13 @@ function computeQuantities(
     if (sd.design) {
       steelSlabs +=
         (sd.design.dirA.asSpan + sd.design.dirB.asSpan) * area * 7850 * 1.4 * reps
+    } else if (sd.ribbedDesign) {
+      // As por metro = As por nervura / espaçamento em cada direção;
+      // fator 1,4 cobre negativos, distribuição da capa e ancoragens
+      const rd = sd.ribbedDesign
+      const spacing = slabById.get(sd.slabId)?.ribbed?.spacing ?? 0.5
+      const asPerM = (rd.dirA.asRib + rd.dirB.asRib) / Math.max(spacing, 0.2)
+      steelSlabs += asPerM * area * 7850 * 1.4 * reps
     } else {
       steelSlabs += area * sd.thickness * 85 * reps // taxa típica p/ não-retangular
     }

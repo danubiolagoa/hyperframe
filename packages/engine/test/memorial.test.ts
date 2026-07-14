@@ -97,7 +97,7 @@ describe('buildMemorialPdf (memorial completo)', () => {
       '5. Estabilidade global',
       '6. Vigas',
       '8. Pilares',
-      '9. Lajes maci\\347as',
+      '9. Lajes \\(Marcus',
       '10. Escadas',
       '11. Reservat\\363rios',
       '12. Funda\\347\\365es',

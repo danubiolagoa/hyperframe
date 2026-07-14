@@ -127,13 +127,31 @@ export interface Beam {
   openings?: BeamOpening[]
 }
 
+/**
+ * Laje nervurada moldada in loco (NBR 6118 §13.2.4.2). A espessura da laje
+ * (`Slab.thickness`) é a altura TOTAL (capa + nervura).
+ */
+export interface RibbedParams {
+  /** direções das nervuras: bidirecional ou unidirecional */
+  dirs: 'xy' | 'x' | 'y'
+  /** largura da nervura (bw), m */
+  ribWidth: number
+  /** espaçamento entre EIXOS de nervuras, m */
+  spacing: number
+  /** espessura da capa (mesa), m */
+  topping: number
+  /** peso específico do enchimento entre nervuras, kN/m³ (0 = forma removível/vazio) */
+  fillerWeight: number
+  label?: string
+}
+
 export interface Slab {
   id: string
   /** L1, L2… */
   name: string
   /** polígono fechado (sem repetir o 1º ponto), sentido anti-horário, m */
   polygon: Vec2[]
-  /** espessura, m */
+  /** espessura (altura total), m */
   thickness: number
   /** revestimento + contrapiso etc. (permanente g2), kN/m² */
   finishLoad: number
@@ -141,6 +159,8 @@ export interface Slab {
   liveLoad: number
   /** rótulo do preset de uso (ex.: "Residencial — dormitórios") */
   liveLoadLabel?: string
+  /** laje nervurada (ausente = maciça) */
+  ribbed?: RibbedParams
 }
 
 /**
@@ -369,7 +389,7 @@ export interface FireParams {
 export type PileKind = 'pre-moldada' | 'escavada' | 'helice' | 'franki' | 'raiz' | 'metalica'
 
 export interface FoundationParams {
-  type: 'sapata' | 'estacas'
+  type: 'sapata' | 'estacas' | 'tubulao'
   /** carga admissível geotécnica por estaca, kN (orientativo — exige laudo) */
   pileCapacity: number
   /** diâmetro da estaca, m */
@@ -379,8 +399,10 @@ export interface FoundationParams {
   pileLabel: string
   /** tipo executivo (Aoki–Velloso; usado na interação solo-estrutura) */
   pileKind?: PileKind
-  /** comprimento da estaca, m (capacidade e mola vertical) */
+  /** comprimento da estaca/tubulão, m (capacidade, mola vertical e volume) */
   pileLength?: number
+  /** tubulão: tensão admissível no concreto do fuste (não armado), kPa — usual 5 MPa */
+  caissonSigmaConcrete?: number
 }
 
 export interface ProjectSettings {

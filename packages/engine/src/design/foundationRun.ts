@@ -8,6 +8,7 @@ import type {
 import { concreteProps, fyd as fydOf } from '../nbr/nbr6118/materials'
 import { designFooting } from '../nbr/nbr6118/foundations'
 import { designPileCap } from '../nbr/nbr6118/pileCaps'
+import { designCaisson } from '../nbr/nbr6122/caisson'
 import { columnSectionInfo } from '../model/columnSection'
 
 /**
@@ -60,6 +61,28 @@ export function runFoundationDesign(
     const ma = alongX ? myServ : mxServ
     const mb = alongX ? mxServ : myServ
 
+    if (project.settings.foundation.type === 'tubulao') {
+      const caisson = designCaisson({
+        nServ,
+        sigmaAdm: project.settings.soil.sigmaAdm,
+        sigmaConcrete: project.settings.foundation.caissonSigmaConcrete ?? 5000,
+      })
+      if (ma + mb > 0.05 * nServ * Math.max(ap, bp)) {
+        caisson.notes.push('Momentos na base não considerados no tubulão — verificar excentricidades.')
+      }
+      out.push({
+        columnId: col.id,
+        name: col.name,
+        nServ,
+        kind: 'tubulao',
+        footing: null,
+        pileCap: null,
+        caisson,
+        status: caisson.status,
+      })
+      continue
+    }
+
     if (usePiles) {
       const pileCap = designPileCap({
         nServ,
@@ -83,6 +106,7 @@ export function runFoundationDesign(
         kind: 'bloco',
         footing: null,
         pileCap,
+        caisson: null,
         status: pileCap.status,
       })
       continue
@@ -105,6 +129,7 @@ export function runFoundationDesign(
       kind: 'sapata',
       footing,
       pileCap: null,
+      caisson: null,
       status: footing.status,
     })
   }

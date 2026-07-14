@@ -333,8 +333,12 @@ export interface SlabDesignResultItem {
   spanB: number
   thickness: number
   rectangular: boolean
-  /** presente apenas p/ lajes retangulares */
+  /** tipologia da laje */
+  kind: 'macica' | 'nervurada'
+  /** presente apenas p/ lajes MACIÇAS retangulares */
   design: import('../nbr/nbr6118/slabDesign').SlabDesignOutput | null
+  /** presente apenas p/ lajes NERVURADAS retangulares */
+  ribbedDesign: import('../nbr/nbr6118/ribbedSlab').RibbedDesignOutput | null
   status: 'ok' | 'atencao' | 'falha'
   notes: string[]
 }
@@ -344,11 +348,13 @@ export interface FoundationResultItem {
   name: string
   /** carga vertical de serviço (G+Q), kN */
   nServ: number
-  kind: 'sapata' | 'bloco'
+  kind: 'sapata' | 'bloco' | 'tubulao'
   /** presente quando kind = 'sapata' */
   footing: import('../nbr/nbr6118/foundations').FootingResult | null
   /** presente quando kind = 'bloco' (estacas) */
   pileCap: import('../nbr/nbr6118/pileCaps').PileCapResult | null
+  /** presente quando kind = 'tubulao' */
+  caisson: import('../nbr/nbr6122/caisson').CaissonResult | null
   status: 'ok' | 'atencao' | 'falha'
 }
 
@@ -434,7 +440,7 @@ export interface BeamOpeningCheckItem {
 export interface SoilSpringItem {
   columnId: string
   name: string
-  kind: 'sapata' | 'bloco'
+  kind: 'sapata' | 'bloco' | 'tubulao'
   /** molas de translação, kN/m */
   kv: number
   kh: number

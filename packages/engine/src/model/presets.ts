@@ -180,6 +180,25 @@ export const OCCUPANCY_OPTIONS: { value: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'
 // Defaults de escada e reservatório (dimensionamento das regiões)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Lajes nervuradas — defaults e enchimentos usuais
+// ---------------------------------------------------------------------------
+
+export const RIBBED_DEFAULTS = {
+  dirs: 'xy' as const,
+  ribWidth: 0.1, // m
+  spacing: 0.55, // m (entre eixos → l0 = 45 cm ≤ 65 cm)
+  topping: 0.05, // m
+  fillerWeight: 0, // forma removível (vazio)
+}
+
+export const RIBBED_FILLER_PRESETS = [
+  { label: 'Forma plástica removível (vazio)', weight: 0 },
+  { label: 'EPS (isopor)', weight: 0.25 },
+  { label: 'Bloco cerâmico', weight: 8.0 },
+  { label: 'Bloco de concreto celular', weight: 5.5 },
+]
+
 export const STAIR_DEFAULTS = {
   waist: 0.12, // espessura da laje do lance, m
   riser: 0.175, // espelho, m

@@ -3,9 +3,9 @@
 **Análise e dimensionamento estrutural de edifícios de concreto armado — normas ABNT.**
 macOS + Windows (Tauri) e navegador. Concorrente moderno de TQS/Eberick.
 
-![status](https://img.shields.io/badge/vers%C3%A3o-0.2.2-orange) ![tests](https://img.shields.io/badge/testes-244%20passando-brightgreen)
+![status](https://img.shields.io/badge/vers%C3%A3o-0.2.3-orange) ![tests](https://img.shields.io/badge/testes-266%20passando-brightgreen)
 
-## O que já faz (v0.2.2)
+## O que já faz (v0.2.3)
 
 - **Modelagem 2D em planta** (estilo planta de forma): eixos com bulbos, pilares
   (**retangulares, circulares e em L**, rotação 0/90/180/270°, **nascendo/morrendo em
@@ -32,11 +32,14 @@ macOS + Windows (Tauri) e navegador. Concorrente moderno de TQS/Eberick.
   (Branson + fluência, L/250), **fissuração ELS-W** (wk vs tab. 13.4)
 - **Dimensionamento NBR 6118**: vigas (flexão + cisalhamento + **torção §17.5** +
   **armadura de pele** + barras), **pilares a flexo-compressão oblíqua** (integração da
-  seção + pilar-padrão), **lajes maciças** (Marcus), **escadas** (lance como laje
-  inclinada) e **reservatórios** (paredes/fundo/tampa com estanqueidade wk ≤ 0,2 mm)
-- **Fundações**: **sapatas rígidas** (bielas/CG com presets de solo) ou **blocos sobre
-  estacas** (método das bielas — Blévot, 1–5 estacas, presets de estacas), **planta de
-  cargas** (reações características por pilar p/ o projetista de fundações)
+  seção + pilar-padrão), **lajes maciças** (Marcus), **lajes nervuradas** (§13.2.4.2 —
+  peso real com enchimento, seção T por nervura, cisalhamento §19.4.1), **punção §19.5**
+  (módulo verificado, base p/ lajes lisas), **escadas** (lance como laje inclinada) e
+  **reservatórios** (paredes/fundo/tampa com estanqueidade wk ≤ 0,2 mm)
+- **Fundações**: **sapatas rígidas** (bielas/CG com presets de solo), **blocos sobre
+  estacas** (método das bielas — Blévot, 1–5 estacas, presets) ou **tubulões a céu
+  aberto** (fuste + base alargada, NBR 6122), **planta de cargas** (reações
+  características por pilar p/ o projetista de fundações)
 - **Interação solo-estrutura**: sondagem SPT por camadas → **molas de apoio CRV/CRH**
   (Es = α·K·NSPT — Teixeira & Godoy p/ sapatas; **Aoki–Velloso** p/ estacas), re-análise
   do pórtico sobre apoios elásticos, **recalques ELS-QP** e distorções angulares
