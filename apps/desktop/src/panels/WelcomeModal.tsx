@@ -116,7 +116,7 @@ export default function WelcomeModal() {
 
         <div className="modal-footer" style={{ justifyContent: 'center', borderTop: 'none' }}>
           <span className="faint" style={{ fontSize: 11, textAlign: 'center', lineHeight: 1.5 }}>
-            v0.2.1 — software em desenvolvimento; os resultados não substituem a verificação de um
+            Software em desenvolvimento — os resultados não substituem a verificação de um
             engenheiro responsável.
           </span>
         </div>
