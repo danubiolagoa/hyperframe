@@ -1,8 +1,9 @@
 # HyperFrame
 
 **Análise e dimensionamento estrutural de edifícios de concreto armado — normas ABNT.**
-macOS + Windows (Tauri) e navegador. Concorrente moderno de TQS/Eberick —
-**100% open source**, com binários por sistema e código-fonte no site.
+macOS + Windows (Tauri) e navegador. Alternativa moderna e aberta aos softwares
+estruturais tradicionais do mercado — **100% open source**, com binários por
+sistema e código-fonte no site.
 
 ![status](https://img.shields.io/badge/vers%C3%A3o-0.2.10-orange) ![tests](https://img.shields.io/badge/testes-302%20passando-brightgreen)
 
