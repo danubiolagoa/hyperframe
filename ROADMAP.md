@@ -259,6 +259,14 @@
 - [x] Spec nas notas da laje, hover da aba Lajes e memorial 9.1 (Arm. = linhas ×
   conectores × φ; falha se C″ não dispensar)
 
+## v0.2.13 — Colapso progressivo (§19.5.4) ✅ (entregue)
+
+- [x] fyd·As,ccp ≥ 1,5·FSd por pilar de laje lisa: área exigida de armadura INFERIOR
+  atravessando o pilar (ancorada além de C′) + sugestão em φ16 — nas notas da laje,
+  no hover da aba Lajes e no memorial 9.1 (âncora: 800 kN ⇒ 27,6 cm² = 14 φ 16).
+  316 testes. Módulo de lajes lisas §19.5 COMPLETO (interno/borda/canto, K·MSd,
+  aberturas, studs até C″, colapso progressivo)
+
 ## Paridade com o CypeCAD — mapa de módulos e fases
 
 > Referência: lista de módulos do CypeCAD (multiplus.com) + recursos do pacote.

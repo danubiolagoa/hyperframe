@@ -399,6 +399,26 @@ export function designPunchingReinf(
   }
 }
 
+/**
+ * Armadura contra COLAPSO PROGRESSIVO — NBR 6118 §19.5.4: a armadura de
+ * flexão INFERIOR que atravessa o contorno C (passando por dentro/sobre o
+ * pilar) deve satisfazer fyd·As,ccp ≥ 1,5·FSd e estar ancorada além do
+ * contorno C′. Retorna a área exigida (soma das barras que cruzam cada face,
+ * nas duas direções) e uma sugestão em φ16.
+ */
+export function collapseReinforcement(
+  fsd: number,
+  fyd: number,
+): { as: number; spec: string } {
+  const as = Math.max((1.5 * fsd) / fyd, 0)
+  const aPhi16 = (Math.PI * 0.016 * 0.016) / 4
+  const n = Math.max(2, Math.ceil(as / aPhi16))
+  return {
+    as,
+    spec: `${n} φ 16 inferiores atravessando o pilar (Σ nas 2 direções, ancoradas além de C′)`,
+  }
+}
+
 export function checkPunching(inp: PunchingInput): PunchingOutput {
   const notes: string[] = []
   const { d } = inp

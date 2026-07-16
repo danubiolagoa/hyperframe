@@ -344,6 +344,8 @@ export interface SlabGridPunchingItem {
   check: import('../nbr/nbr6118/punching').PunchingOutput
   /** armadura de punção dimensionada (studs) quando τSd1 > τRd1 */
   reinf?: import('../nbr/nbr6118/punching').PunchingReinfDesign
+  /** armadura contra colapso progressivo (§19.5.4): As exigido + sugestão */
+  collapse: { as: number; spec: string }
 }
 
 /** dimensionamento de laje pelo método da GRELHA (qualquer contorno) */

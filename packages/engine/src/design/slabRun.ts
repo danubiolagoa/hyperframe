@@ -7,6 +7,7 @@ import { designBeamFlexure } from '../nbr/nbr6118/beamDesign'
 import { designRibbedSlab, ribbedSelfWeight } from '../nbr/nbr6118/ribbedSlab'
 import {
   checkPunching,
+  collapseReinforcement,
   designPunchingReinf,
   openingPerimeterReduction,
 } from '../nbr/nbr6118/punching'
@@ -447,7 +448,18 @@ function designSlabByGrid(
         `Punção de ${col.name}: armadura dimensionada — ${reinf.spec}; contorno C″ ${reinf.ok ? 'dispensa' : 'NÃO dispensa'} (τSd = ${reinf.tauSdC2.toFixed(0)} × τRd1 = ${check.tauRd1.toFixed(0)} kPa, §19.5.3.4).`,
       )
     }
-    punching.push({ columnId: colId, name: col.name, fsd, check, reinf })
+    // colapso progressivo (§19.5.4): fyd·As,ccp ≥ 1,5·FSd na face inferior
+    const collapse = collapseReinforcement(fsd, mat.fyd)
+    punching.push({ columnId: colId, name: col.name, fsd, check, reinf, collapse })
+  }
+  if (punching.length > 0) {
+    notes.push(
+      `Colapso progressivo (§19.5.4) — armadura INFERIOR atravessando cada pilar (ancorar além de C′): ` +
+        punching
+          .map((p) => `${p.name} ≥ ${(p.collapse.as * 1e4).toFixed(1)} cm²`)
+          .join(' · ') +
+        '.',
+    )
   }
 
   // reforço de borda dos furos: repõe a armadura interrompida (metade por

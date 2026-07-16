@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { designCaisson } from '../src/nbr/nbr6122/caisson'
-import { checkPunching, designPunchingReinf, openingPerimeterReduction, punchingK } from '../src/nbr/nbr6118/punching'
+import { checkPunching, collapseReinforcement, designPunchingReinf, openingPerimeterReduction, punchingK } from '../src/nbr/nbr6118/punching'
 import { checkConsistency } from '../src/model/consistency'
 import { createSampleProject } from '../src/model/factory'
 import { analyze } from '../src/analyze'
@@ -312,5 +312,14 @@ describe('designPunchingReinf (studs, α = 90°)', () => {
     const r = designPunchingReinf({ ...base, fsd: 1600 }) // τSd0 = 6250 > τRd2
     expect(r.ok).toBe(false)
     expect(r.notes.some((n) => n.includes('NÃO resolve'))).toBe(true)
+  })
+})
+
+describe('colapso progressivo (§19.5.4)', () => {
+  it('âncora manual: FSd = 800 kN, CA-50 ⇒ As,ccp = 1,5·800/434,78 = 27,6 cm²', () => {
+    const r = collapseReinforcement(800, 500000 / 1.15)
+    expect(r.as).toBeCloseTo(27.6e-4, 5)
+    expect(r.spec).toContain('14 φ 16') // 27,6/2,01 = 13,7 → 14 barras
+    expect(r.spec).toContain('ancoradas além de C′')
   })
 })

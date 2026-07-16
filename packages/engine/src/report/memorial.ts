@@ -709,7 +709,9 @@ export function buildMemorialPdf(
         'conectores φ) por τRd3 (§19.5.3.3, α = 90°, s0 ≤ 0,5d, sr ≤ 0,75d, ≤ 2d na linha) e ' +
         'estendidos até o contorno C″ dispensar (§19.5.3.4). Pilares de borda/canto: perímetro ' +
         'REDUZIDO u* e MSd corrigido por e* com K da tab. 19.2 (§19.5.2); MSd desbalanceado ' +
-        'tomado da envoltória do pórtico.',
+        'tomado da envoltória do pórtico. Colapso progressivo (§19.5.4): prever armadura ' +
+        'inferior atravessando cada pilar com fyd·As ≥ 1,5·FSd (valores nas notas da laje), ' +
+        'ancorada além de C′.',
       7.8,
       'I',
       0.3,
