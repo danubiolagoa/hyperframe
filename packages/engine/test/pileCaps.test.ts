@@ -75,12 +75,18 @@ describe('designPileCap (Blévot)', () => {
     expect(r.mainSpec).toBe('malha mínima')
   })
 
-  it('estaca sobrecarregada → falha', () => {
+  it('carga que pedia 7 estacas agora vira bloco CEB (sem clamp em 5)', () => {
     const r = designPileCap({ nServ: 2000, ...BASE, pileCapacity: 300 })
-    // 2100/5 estacas (cap do método) = 420 > 300
-    expect(r.nPiles).toBe(5)
+    // 2100/300 = 7 estacas — malha 2×4 pelo método CEB, carga/estaca no limite
+    expect(r.nPiles).toBe(7)
+    expect(r.pileLoad).toBeLessThanOrEqual(300 + 1e-6)
+    expect(r.notes.some((n) => n.includes('CEB-70'))).toBe(true)
+  })
+
+  it('estaca sobrecarregada (nº fixado) → falha', () => {
+    const r = designPileCap({ nServ: 2000, ...BASE, pileCapacity: 300, nPilesFixed: 4 })
+    expect(r.pileLoad).toBeGreaterThan(300)
     expect(r.status).toBe('falha')
-    expect(r.notes.some((n) => n.includes('5 estacas'))).toBe(true)
   })
 
   it('α mantido em 45–55° pela escolha de d', () => {

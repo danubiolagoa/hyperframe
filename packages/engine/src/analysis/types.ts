@@ -409,6 +409,14 @@ export interface FoundationResultItem {
   depth?: number
   /** presente quando kind = 'sapata' */
   footing: import('../nbr/nbr6118/foundations').FootingResult | null
+  /** sapata associada (2 pilares) — no pilar DONO do par */
+  combined?: import('../nbr/nbr6118/combinedFooting').CombinedFootingResult & {
+    partnerId: string
+    partnerName: string
+    L: number
+  }
+  /** pilar secundário de uma associada: id do pilar onde ela foi dimensionada */
+  combinedWithId?: string
   /** viga alavanca (sapata de divisa) — presente quando strapToColumnId válido */
   strap?: import('../nbr/nbr6122/strapBeam').StrapBeamResult & {
     partnerId: string

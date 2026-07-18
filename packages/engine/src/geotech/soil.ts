@@ -250,7 +250,11 @@ export function footingSprings(
   return { kv, kh, krx, kry, krz, esAvg, notes }
 }
 
-/** posições padrão das estacas (layouts 1–5) em coords locais (a, b), m */
+/**
+ * Posições padrão das estacas em coords locais (a, b), m.
+ * 1–5: layouts clássicos (linha, triângulo, quadrado, quadrado+centro);
+ * ≥ 6: malha retangular linhas×colunas (linha incompleta centrada) — CEB.
+ */
 export function pileLayout(n: number, e: number): { a: number; b: number }[] {
   switch (n) {
     case 1:
@@ -275,11 +279,30 @@ export function pileLayout(n: number, e: number): { a: number; b: number }[] {
         { a: e / 2, b: e / 2 },
         { a: -e / 2, b: e / 2 },
       ]
+    case 5:
+      return [...pileLayout(4, e), { a: 0, b: 0 }]
     default: {
-      const four = pileLayout(4, e)
-      return [...four, { a: 0, b: 0 }]
+      const rows = Math.max(2, Math.floor(Math.sqrt(n)))
+      const cols = Math.ceil(n / rows)
+      const out: { a: number; b: number }[] = []
+      let left = n
+      for (let r = 0; r < rows && left > 0; r++) {
+        const inRow = Math.min(cols, left)
+        left -= inRow
+        const b = ((rows - 1) / 2 - r) * e
+        for (let c = 0; c < inRow; c++) {
+          out.push({ a: (c - (inRow - 1) / 2) * e, b })
+        }
+      }
+      return out
     }
   }
+}
+
+/** malha do bloco CEB: nº de linhas/colunas usado por pileLayout p/ n ≥ 6 */
+export function pileGridDims(n: number): { rows: number; cols: number } {
+  const rows = Math.max(2, Math.floor(Math.sqrt(n)))
+  return { rows, cols: Math.ceil(n / rows) }
 }
 
 /**

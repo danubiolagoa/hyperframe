@@ -25,7 +25,7 @@ export function buildFoundationDetailDrawing(
     .map((it) => {
       const col = byId.get(it.columnId)
       if (!col) return null
-      const s = foundationShape(it, col)
+      const s = foundationShape(it, col, it.combined ? byId.get(it.combined.partnerId) : undefined)
       if (!s) return null
       const ext = s.polygon
         ? Math.max(
@@ -85,9 +85,15 @@ export function buildFoundationDetailDrawing(
     })
 
     const num = col.name.replace(/^\D+/, '')
-    const fname = `${PREFIX[it.kind]}${num}`
+    const fname = `${it.combined ? 'SA' : PREFIX[it.kind]}${num}`
     const lines: string[] = [`${fname} (${col.name}) — ${s.dims}${it.manual ? ' · manual' : ''}`]
-    if (it.kind === 'sapata' && it.footing) {
+    if (it.combined) {
+      const cf = it.combined
+      lines.push(`h=${Math.round(cf.h * 100)} cm · σ ${cf.sigma.toFixed(0)} kPa · M− ${cf.mHog.toFixed(0)} / M+ ${cf.mSag.toFixed(0)} kN·m`)
+      lines.push(`long. SUPERIOR (entre pilares): ${cf.topSpec}`)
+      lines.push(`long. inferior (balanços): ${cf.botSpec}`)
+      lines.push(`transversal inferior: ${cf.transvSpec}`)
+    } else if (it.kind === 'sapata' && it.footing) {
       const f = it.footing
       lines.push(`h=${Math.round(f.h * 100)} cm · σmáx ${f.sigmaMax.toFixed(0)} kPa`)
       lines.push(`armadura dir. a: ${f.specA}`)

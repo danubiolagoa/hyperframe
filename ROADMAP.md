@@ -331,16 +331,36 @@
   estribo mínimo φ6,3 c/ 20, crescimento de h, e > L/4) — 332 no total
 - [ ] Restante da fase 2: sapatas associadas/corridas, blocos ≥ 6 estacas (CEB)
 
+## v0.2.19 — Sapatas associadas + blocos 6–16 estacas (CEB) ✅
+
+- [x] `designCombinedFooting`: sapata associada p/ 2 pilares — retângulo com CG
+  na resultante (σ uniforme), estática exata da viga invertida (M− máx. onde o
+  cortante zera; M+ nos balanços), altura rígida §22.6.1 crescendo até a flexão
+  caber, armaduras long. superior/inferior + transversal, modo verificação com
+  `fixed` e avisos (A/B > 5 ⇒ baldrame; resultante perto do bordo)
+- [x] `FoundationOverride.combineWithColumnId`: select "Sapata associada com" no
+  inspetor; pilar parceiro vira secundário (aponta o dono, espelha status)
+- [x] `designPileCap` sem clamp de 5: **6–16 estacas pelo CEB-70** (apud
+  Bastos/UNESP) — malha `pileGridDims` linhas×colunas, h ≥ (a−ap)/3 (§22.7.1),
+  flexão na seção S1 (0,15·ap) por direção via §17, cortante na S2 (d/2) × VRd2,
+  esmagamento no apoio, armadura distribuída sobre as estacas + malha mínima
+- [x] `pileLayout` estendido p/ malha retangular (n ≥ 6, linha incompleta centrada)
+- [x] Geometria/desenhos: retângulo ROTACIONADO da associada na linha dos
+  pilares (2D/3D/plantas), rótulo SA, célula no detalhamento com as 3 armaduras,
+  resumo aponta o dono no pilar secundário
+- [x] 11 testes novos (âncoras: CEB 2×3 M_S1 = 739 kN·m → As 20,6 cm²;
+  associada 2×500 kN → 3,65×1,45, M− 308 kN·m) — 343 no total
+
 ## Backlog técnico consolidado (18/07/2026 — direcionamentos do Cândido)
 
 > Prioridade nova: **fundações como ELEMENTOS do modelo** (hoje são só resultado
 > de cálculo — sem edição de geometria, posição, planta ou 3D). Vibração (§23.3)
 > explicitamente adiada p/ o futuro.
 
-1. **Fundações editáveis**: ✅ fase 1 na v0.2.17 (edição por pilar + planta de
-   fundações + 2D/3D) · ✅ fase 2a na v0.2.18 (viga alavanca de divisa +
-   detalhamento de fundações em prancha). Falta: sapatas associadas/corridas,
-   blocos ≥ 6 estacas (CEB)
+1. **Fundações editáveis**: ✅ COMPLETO — v0.2.17 (edição por pilar + planta),
+   v0.2.18 (viga alavanca + detalhamento) e v0.2.19 (sapatas associadas +
+   blocos 6–16 estacas CEB). Sobrou só sapata corrida sob alinhamento de
+   pilares (caso raro em edifícios — baldrame de Winkler já cobre parcial)
 2. Armação de LAJES em planta (dados prontos; falta o desenho)
 3. **Grelha de pavimento unificada**: hoje a grelha é POR LAJE com bordas
    rotuladas nas vigas — a continuidade entre lajes vizinhas só é considerada no

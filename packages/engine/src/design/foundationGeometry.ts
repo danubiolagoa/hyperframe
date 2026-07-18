@@ -26,7 +26,36 @@ const cmTxt = (m: number): string => String(Math.round(m * 100))
 export function foundationShape(
   item: FoundationResultItem,
   column: Column,
+  /** pilar parceiro (necessário p/ sapata associada) */
+  partner?: Column,
 ): FoundationShape | null {
+  // secundário de associada: a geometria vive no pilar dono
+  if (item.combinedWithId) return null
+  if (item.combined && partner) {
+    const cf = item.combined
+    const ux0 = partner.pos.x - column.pos.x
+    const uy0 = partner.pos.y - column.pos.y
+    const len = Math.hypot(ux0, uy0) || 1
+    const ux = ux0 / len
+    const uy = uy0 / len
+    const cx = column.pos.x + ux * cf.xg + (item.offset?.x ?? 0)
+    const cy = column.pos.y + uy * cf.xg + (item.offset?.y ?? 0)
+    const ha = cf.a / 2
+    const hb = cf.b / 2
+    const corner = (sa: number, sb: number): Vec2 => ({
+      x: cx + ux * sa * ha - uy * sb * hb,
+      y: cy + uy * sa * ha + ux * sb * hb,
+    })
+    return {
+      center: { x: cx, y: cy },
+      polygon: [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)],
+      circles: [],
+      h: cf.h,
+      depth: item.depth ?? 0,
+      dims: `${cmTxt(cf.a)}×${cmTxt(cf.b)} (${column.name}+${cf.partnerName})`,
+    }
+  }
+  if (item.combined) return null
   const center: Vec2 = {
     x: column.pos.x + (item.offset?.x ?? 0),
     y: column.pos.y + (item.offset?.y ?? 0),

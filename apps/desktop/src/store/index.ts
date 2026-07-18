@@ -365,7 +365,9 @@ export const useStore = create<HFState>()(
             ov.b !== undefined ||
             ov.nPiles !== undefined ||
             ov.offset !== undefined ||
-            ov.depth !== undefined
+            ov.depth !== undefined ||
+            ov.strapToColumnId !== undefined ||
+            ov.combineWithColumnId !== undefined
           if (hasContent) list.push(ov)
           const project = { ...s.project, foundationOverrides: list }
           return {

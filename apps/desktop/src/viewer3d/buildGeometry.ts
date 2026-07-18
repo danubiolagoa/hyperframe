@@ -387,11 +387,23 @@ export function buildFoundations(
   for (const it of foundations) {
     const col = byId.get(it.columnId)
     if (!col) continue
-    const s = foundationShape(it, col)
+    const partner = it.combined ? byId.get(it.combined.partnerId) : undefined
+    const s = foundationShape(it, col, partner)
     if (!s) continue
     const depth = it.depth ?? 0
     const top = z0 - depth
-    if (s.polygon) {
+    if (it.combined && partner) {
+      // associada: box girado na linha dos pilares (polígono é rotacionado)
+      out.push({
+        key: `fnd:${it.columnId}:comb`,
+        columnId: it.columnId,
+        shape: 'box',
+        position: [s.center.x, top - s.h / 2, -s.center.y],
+        rotationY: Math.atan2(partner.pos.y - col.pos.y, partner.pos.x - col.pos.x),
+        size: [it.combined.a, s.h, it.combined.b],
+        status: it.status,
+      })
+    } else if (s.polygon) {
       const xsP = s.polygon.map((p) => p.x)
       const ysP = s.polygon.map((p) => p.y)
       out.push({

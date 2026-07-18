@@ -500,6 +500,8 @@ export interface FoundationOverride {
   offset?: Vec2
   /** sapata de divisa: pilar interno que recebe a viga alavanca */
   strapToColumnId?: string
+  /** sapata ASSOCIADA: pilar vizinho que divide a mesma sapata */
+  combineWithColumnId?: string
   /** profundidade do topo abaixo do nível da fundação, m */
   depth?: number
 }

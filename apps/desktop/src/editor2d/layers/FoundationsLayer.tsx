@@ -26,10 +26,10 @@ export default memo(function FoundationsLayer({ items, columns, k }: Props) {
       {items.map((it) => {
         const col = byId.get(it.columnId)
         if (!col) return null
-        const shape = foundationShape(it, col)
+        const shape = foundationShape(it, col, it.combined ? byId.get(it.combined.partnerId) : undefined)
         if (!shape) return null
         const stroke = COLOR[it.status]
-        const label = `${it.kind === 'sapata' ? 'S' : it.kind === 'bloco' ? 'B' : 'T'}${col.name.replace(/^\D+/, '')} ${shape.dims}`
+        const label = `${it.kind === 'sapata' ? (it.combined ? 'SA' : 'S') : it.kind === 'bloco' ? 'B' : 'T'}${col.name.replace(/^\D+/, '')} ${shape.dims}`
         const yBottom = shape.polygon
           ? Math.min(...shape.polygon.map((p) => p.y))
           : shape.center.y - Math.max(...shape.circles.map((c) => c.r))

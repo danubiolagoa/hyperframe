@@ -43,8 +43,26 @@ export function buildFoundationPlanDrawing(
   for (const item of foundations) {
     const col = byId.get(item.columnId)
     if (!col) continue
-    const shape = foundationShape(item, col)
-    if (!shape) continue
+    const shape = foundationShape(
+      item,
+      col,
+      item.combined ? byId.get(item.combined.partnerId) : undefined,
+    )
+    if (!shape) {
+      // secundário de associada: só linha no resumo apontando o dono
+      if (item.combinedWithId) {
+        const owner = byId.get(item.combinedWithId)
+        rows.push([
+          '—',
+          col.name,
+          `associada c/ ${owner?.name ?? '?'}`,
+          '',
+          'manual',
+          item.status,
+        ])
+      }
+      continue
+    }
 
     // pilar (retângulo/círculo da seção)
     const info = columnSectionInfo(col.section)
@@ -70,7 +88,7 @@ export function buildFoundationPlanDrawing(
       prims.push({ kind: 'circle', cx: c.c.x, cy: c.c.y, r: c.r, layer: 'CONTORNO' })
     }
 
-    const fname = `${PREFIX[item.kind]}${col.name.replace(/^\D+/, '')}`
+    const fname = `${item.combined ? 'SA' : PREFIX[item.kind]}${col.name.replace(/^\D+/, '')}`
     const label = `${fname} ${shape.dims}`
     const yTxt = shape.polygon
       ? Math.min(...shape.polygon.map((p) => p.y)) - 0.18
@@ -114,8 +132,9 @@ export function buildFoundationPlanDrawing(
       }
     }
 
-    const detail =
-      item.kind === 'sapata' && item.footing
+    const detail = item.combined
+      ? `h=${Math.round(item.combined.h * 100)} · σ=${item.combined.sigma.toFixed(0)} kPa · c/ ${item.combined.partnerName}`
+      : item.kind === 'sapata' && item.footing
         ? `h=${Math.round(item.footing.h * 100)} · σmáx=${item.footing.sigmaMax.toFixed(0)} kPa${item.strap ? ` · VA→${item.strap.partnerName}` : ''}`
         : item.kind === 'bloco' && item.pileCap
           ? `${item.pileCap.nPiles} est. ø${Math.round(item.pileCap.pileDiameter * 100)} · ${item.pileCap.pileLoad.toFixed(0)} kN/est.`

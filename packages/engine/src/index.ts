@@ -112,6 +112,12 @@ export {
   creepFactor,
 } from './nbr/nbr6118/deflections'
 export { designFooting, type FootingInput, type FootingResult } from './nbr/nbr6118/foundations'
+export {
+  designCombinedFooting,
+  type CombinedFootingInput,
+  type CombinedFootingResult,
+} from './nbr/nbr6118/combinedFooting'
+export { pileGridDims } from './geotech/soil'
 export { fbd, basicAnchorage, requiredAnchorage } from './nbr/nbr6118/anchorage'
 export {
   checkBeamOpening,

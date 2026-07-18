@@ -15,7 +15,15 @@
  *  Bielas (esmagamento): σ,pil = Nd/(Ap·sen²α) · σ,est = Nd/(n·Ae·sen²α)
  *  Limites (Blévot): 1,4·KR·fcd (2 est.) · 1,75·KR·fcd (3) · 2,1·KR·fcd (4/5),
  *  KR = 0,9 (efeito Rüsch). Ângulo recomendado: 45° ≤ α ≤ 55°.
+ *
+ *  6–16 estacas: malha retangular + MÉTODO CEB-70 (apud Bastos/UNESP):
+ *  flexão na seção S1 (0,15·ap p/ dentro da face do pilar) com as reações das
+ *  estacas além da seção, por direção; cortante na seção S2 (d/2 da face)
+ *  limitado por VRd2 (§17.4.2.2); bloco rígido: h ≥ (a − ap)/3 (§22.7.1).
  */
+
+import { designBeamFlexure } from './beamDesign'
+import { pileLayout, pileGridDims } from '../../geotech/soil'
 
 export interface PileCapInput {
   /** carga vertical de serviço do pilar (G+Q), kN */
@@ -89,17 +97,18 @@ export function designPileCap(inp: PileCapInput): PileCapResult {
   const apEq = Math.sqrt(inp.ap * inp.bp)
   const spacing = Math.max(inp.spacingFactor, 2.5) * phi
 
-  // nº de estacas (com ~5% de peso próprio do bloco), limitado a 5 no método
+  // nº de estacas (com ~5% de peso próprio do bloco); 6+ vai p/ o método CEB
   let n = inp.nPilesFixed ?? Math.max(1, Math.ceil((1.05 * inp.nServ) / inp.pileCapacity))
   if (inp.nPilesFixed) {
     notes.push('Nº de estacas fixado manualmente — verificação, não dimensionamento.')
   }
-  if (n > 5) {
+  if (n > 16) {
     notes.push(
-      `Carga exige ${n} estacas — bloco acima de 5 estacas fora do escopo (dimensionar bloco especial ou aumentar a capacidade da estaca).`,
+      `Carga exige ${n} estacas — acima de 16 fora do escopo (dimensionar bloco especial/radier estaqueado).`,
     )
-    n = 5
+    n = 16
   }
+  if (n >= 6) return designPileCapCEB(inp, n, notes)
   const pileLoad = (1.05 * inp.nServ) / n
   const nd = 1.4 * inp.nServ
 
@@ -186,6 +195,107 @@ export function designPileCap(inp: PileCapInput): PileCapResult {
     planB,
     asMain,
     mainSpec: n <= 1 ? 'malha mínima' : pickTieBars(asMain),
+    sigmaPil,
+    sigmaEst,
+    sigmaLim,
+    status,
+    notes,
+  }
+}
+
+/** 6–16 estacas: malha retangular + CEB-70 (flexão em S1, cortante em S2) */
+function designPileCapCEB(inp: PileCapInput, n: number, notes: string[]): PileCapResult {
+  const phi = inp.pileDiameter
+  const spacing = Math.max(inp.spacingFactor, 2.5) * phi
+  const { rows, cols } = pileGridDims(n)
+  const layout = pileLayout(n, spacing)
+  const pileLoad = (1.05 * inp.nServ) / n
+  const nd = 1.4 * inp.nServ
+  const ri = nd / n
+
+  const edge = phi + 0.3
+  const planA = (cols - 1) * spacing + edge
+  const planB = (rows - 1) * spacing + edge
+
+  // bloco rígido: h ≥ (a − ap)/3 nas duas direções (NBR 6118 §22.7.1)
+  const h = Math.max(
+    0.6,
+    round5up(Math.max((planA - inp.ap) / 3, (planB - inp.bp) / 3) + D_PRIME),
+  )
+  const d = h - D_PRIME
+
+  // flexão CEB na seção S1 = 0,15·ap p/ DENTRO da face (por direção)
+  const flexAt = (colDim: number, coord: (p: { a: number; b: number }) => number, bw: number) => {
+    const xS1 = colDim / 2 - 0.15 * colDim
+    const m = layout.reduce((sum, pt) => {
+      const x = coord(pt)
+      return x > xS1 + 1e-9 ? sum + ri * (x - xS1) : sum
+    }, 0)
+    const f = designBeamFlexure({ md: m, bw, h, d, fcd: inp.fcd, fyd: inp.fyd, fck: inp.fcd * 1.4 })
+    return { m, as: f.as, ok: f.ok }
+  }
+  const dirA = flexAt(inp.ap, (p) => p.a, planB)
+  const dirB = flexAt(inp.bp, (p) => p.b, planA)
+  const asMain = Math.max(dirA.as, dirB.as)
+
+  // cortante CEB na seção S2 = d/2 da face (pior direção) × VRd2
+  const shearAt = (colDim: number, coord: (p: { a: number; b: number }) => number, bw: number) => {
+    const xS2 = colDim / 2 + d / 2
+    const v = layout.reduce((sum, pt) => (coord(pt) > xS2 + 1e-9 ? sum + ri : sum), 0)
+    // fck ≈ γc·fcd (γc = 1,4); αv2 = 1 − fck/250 (fck em MPa)
+    const alphaV2 = 1 - (inp.fcd * 1.4) / 1000 / 250
+    const vrd2 = 0.27 * alphaV2 * inp.fcd * bw * d
+    return { v, vrd2 }
+  }
+  const shA = shearAt(inp.ap, (p) => p.a, planB)
+  const shB = shearAt(inp.bp, (p) => p.b, planA)
+
+  // esmagamento no pilar (apoio direto)
+  const sigmaPil = nd / (inp.ap * inp.bp)
+  const sigmaEst = nd / (n * ((Math.PI * phi * phi) / 4))
+  const sigmaLim = 2.1 * KR * inp.fcd
+
+  const rFar = Math.max(...layout.map((p) => Math.hypot(p.a, p.b)))
+  const alphaDeg = (Math.atan(d / Math.max(rFar - Math.sqrt(inp.ap * inp.bp) / 4, 0.1)) * 180) / Math.PI
+
+  let status: PileCapResult['status'] = 'ok'
+  if (pileLoad > inp.pileCapacity + 1e-6) status = 'falha'
+  if (sigmaPil > sigmaLim || sigmaEst > sigmaLim) {
+    status = 'falha'
+    notes.push('Esmagamento no apoio — aumentar seção do pilar/estacas ou fck.')
+  }
+  if (!dirA.ok || !dirB.ok) {
+    status = 'falha'
+    notes.push('Flexão CEB não coube na altura rígida — aumentar h/planta do bloco.')
+  }
+  if (shA.v > shA.vrd2 || shB.v > shB.vrd2) {
+    status = 'falha'
+    notes.push('Cortante na seção S2 excede VRd2 — aumentar h ou a planta do bloco.')
+  }
+
+  notes.push(
+    `Bloco com ${n} estacas em malha ${rows}×${cols} — método CEB-70 (S1/S2, apud Bastos/UNESP).`,
+  )
+  notes.push(
+    `Armadura por direção: A = ${(dirA.as * 1e4).toFixed(1)} cm² (M=${dirA.m.toFixed(0)} kN·m) · B = ${(dirB.as * 1e4).toFixed(1)} cm² (M=${dirB.m.toFixed(0)} kN·m) — distribuir sobre as estacas.`,
+  )
+  notes.push('Distribuir a armadura principal sobre as estacas + malha mínima complementar (§22.7.4).')
+  notes.push('Verificar punção das estacas de canto e armadura de suspensão (§22.7.4).')
+  notes.push('Capacidade da estaca é geotécnica ORIENTATIVA — exige laudo e prova de carga (NBR 6122).')
+
+  return {
+    nPiles: n,
+    pileDiameter: phi,
+    pileLoad,
+    pileCapacity: inp.pileCapacity,
+    e: spacing,
+    d,
+    h,
+    alphaDeg,
+    planA,
+    planB,
+    asMain,
+    mainSpec: pickTieBars(asMain),
     sigmaPil,
     sigmaEst,
     sigmaLim,

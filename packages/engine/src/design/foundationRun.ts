@@ -10,6 +10,7 @@ import { designFooting } from '../nbr/nbr6118/foundations'
 import { designPileCap } from '../nbr/nbr6118/pileCaps'
 import { designCaisson } from '../nbr/nbr6122/caisson'
 import { designStrapBeam } from '../nbr/nbr6122/strapBeam'
+import { designCombinedFooting } from '../nbr/nbr6118/combinedFooting'
 import type { FoundationResultItem as FRI } from '../analysis/types'
 import { columnSectionInfo } from '../model/columnSection'
 
@@ -36,6 +37,24 @@ export function runFoundationDesign(
 
   const reactionAt = (cr: CaseResult | undefined, nodeId: number) =>
     cr?.reactions.find((r) => r.nodeId === nodeId)
+
+  // pilares secundários de sapatas associadas (dimensionadas no pilar dono)
+  const combinedSecondary = new Map<string, string>() // secundário → dono
+  for (const o of project.foundationOverrides ?? []) {
+    if (o.combineWithColumnId && o.combineWithColumnId !== o.columnId) {
+      combinedSecondary.set(o.combineWithColumnId, o.columnId)
+    }
+  }
+
+  const serviceReaction = (c: { pos: { x: number; y: number } }): number | null => {
+    const nd = model.nodes.find(
+      (n) => n.support && Math.abs(n.x - c.pos.x) < 0.05 && Math.abs(n.y - c.pos.y) < 0.05,
+    )
+    if (!nd) return null
+    const prg = reactionAt(g, nd.id)
+    if (!prg) return null
+    return prg.fz + (reactionAt(q, nd.id)?.fz ?? 0)
+  }
 
   for (const col of project.columns) {
     // nó de apoio do pilar (base)
@@ -124,6 +143,66 @@ export function runFoundationDesign(
         pileCap,
         caisson: null,
         status: pileCap.status,
+      })
+      continue
+    }
+
+    // ---- sapata ASSOCIADA (2 pilares): dimensionada no pilar dono do override ----
+    const partnerC =
+      ov?.combineWithColumnId && ov.combineWithColumnId !== col.id
+        ? project.columns.find((c) => c.id === ov.combineWithColumnId)
+        : undefined
+    if (partnerC) {
+      const n2 = serviceReaction(partnerC)
+      const L = Math.hypot(partnerC.pos.x - col.pos.x, partnerC.pos.y - col.pos.y)
+      if (n2 !== null && n2 > 1e-6 && L > 0.3) {
+        const infoP = columnSectionInfo(partnerC.section)
+        const cf = designCombinedFooting({
+          n1Serv: nServ,
+          n2Serv: n2,
+          L,
+          ap1: Math.max(info.bu, info.bv),
+          bp1: Math.min(info.bu, info.bv),
+          ap2: Math.max(infoP.bu, infoP.bv),
+          bp2: Math.min(infoP.bu, infoP.bv),
+          sigmaAdm: project.settings.soil.sigmaAdm,
+          fck: cp.fck,
+          fcd: cp.fcd,
+          fyd: fydV,
+          fixed: ov?.a && ov?.b ? { a: ov.a, b: ov.b } : undefined,
+        })
+        if (ov?.strapToColumnId) {
+          cf.notes.push('Sapata associada tem prioridade sobre a viga alavanca — remova um dos dois.')
+        }
+        out.push({
+          columnId: col.id,
+          name: col.name,
+          nServ,
+          kind: 'sapata',
+          ...extra,
+          footing: null,
+          combined: { ...cf, partnerId: partnerC.id, partnerName: partnerC.name, L },
+          pileCap: null,
+          caisson: null,
+          status: cf.status,
+        })
+        continue
+      }
+    }
+    if (combinedSecondary.has(col.id)) {
+      const ownerId = combinedSecondary.get(col.id)!
+      const owner = project.columns.find((c) => c.id === ownerId)
+      out.push({
+        columnId: col.id,
+        name: col.name,
+        nServ,
+        kind: 'sapata',
+        manual: true,
+        footing: null,
+        combinedWithId: ownerId,
+        pileCap: null,
+        caisson: null,
+        status: 'ok',
       })
       continue
     }
@@ -228,6 +307,13 @@ export function runFoundationDesign(
       caisson: null,
       status: strap ? worst(footing.status, strap.status) : footing.status,
     })
+  }
+  // secundários de associadas espelham o status do pilar dono
+  for (const it of out) {
+    if (it.combinedWithId) {
+      const owner = out.find((o) => o.columnId === it.combinedWithId)
+      if (owner) it.status = owner.status
+    }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true }))
 }

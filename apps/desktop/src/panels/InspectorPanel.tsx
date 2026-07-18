@@ -654,7 +654,9 @@ function FoundationSection({ col, project }: { col: Column; project: Project }) 
     setFoundationOverride({ ...ov, ...p, columnId: col.id })
 
   const dims = item
-    ? item.footing
+    ? item.combined
+      ? `SA ${Math.round(cm(item.combined.a))}×${Math.round(cm(item.combined.b))} c/ ${item.combined.partnerName} · h=${Math.round(cm(item.combined.h))} · σ ${fmt(item.combined.sigma, 0)} kPa · sup ${item.combined.topSpec} / inf ${item.combined.botSpec}`
+      : item.footing
       ? `${Math.round(cm(item.footing.a))}×${Math.round(cm(item.footing.b))} · h=${Math.round(cm(item.footing.h))} · σmáx ${fmt(item.footing.sigmaMax, 0)} kPa`
       : item.pileCap
         ? `${item.pileCap.nPiles} est. ø${Math.round(cm(item.pileCap.pileDiameter))} · ${fmt(item.pileCap.pileLoad, 0)}/${fmt(item.pileCap.pileCapacity, 0)} kN`
@@ -662,6 +664,21 @@ function FoundationSection({ col, project }: { col: Column; project: Project }) 
           ? `fuste ø${Math.round(cm(item.caisson.shaftD))} · base ø${Math.round(cm(item.caisson.baseD))}`
           : ''
     : null
+
+  // pilar secundário de sapata associada: a fundação vive no pilar dono
+  if (item?.combinedWithId) {
+    const owner = project.columns.find((c) => c.id === item.combinedWithId)
+    return (
+      <>
+        <h3 className="panel-title" style={{ marginTop: 14 }}>
+          Fundação
+        </h3>
+        <div className="faint" style={{ fontSize: 11 }}>
+          Sapata ASSOCIADA — dimensionada no pilar {owner?.name ?? '?'} (edite lá).
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -717,6 +734,27 @@ function FoundationSection({ col, project }: { col: Column; project: Project }) 
               }
             />
           </div>
+        </div>
+      )}
+
+      {effKind === 'sapata' && (
+        <div className="field">
+          <label className="label">Sapata associada com (pilar próximo)</label>
+          <select
+            className="select"
+            style={{ width: '100%' }}
+            value={ov?.combineWithColumnId ?? ''}
+            onChange={(e) => patch({ combineWithColumnId: e.target.value || undefined })}
+          >
+            <option value="">— (isolada)</option>
+            {project.columns
+              .filter((c) => c.id !== col.id)
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+          </select>
         </div>
       )}
 
