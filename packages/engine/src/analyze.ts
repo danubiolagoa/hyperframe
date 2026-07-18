@@ -10,6 +10,7 @@ import {
   pickBars,
   skinReinforcement,
 } from './nbr/nbr6118/beamDesign'
+import { effectiveFlange, designTBeamFlexure } from './nbr/nbr6118/tSection'
 import { gammaZ, alphaParam } from './nbr/nbr6118/stability'
 import { DRIFT_STORY_RATIO, DRIFT_TOP_RATIO } from './nbr/api'
 import { runColumnDesign } from './design/columnRun'
@@ -752,6 +753,62 @@ function applySecondOrderAmplification(
 }
 
 // ---------------------------------------------------------------------------
+// mesa colaborante (§14.6.2.2): lajes adjacentes ao trecho do vão
+// ---------------------------------------------------------------------------
+
+/**
+ * Procura laje colada ao segmento do vão em cada lado (borda colinear com
+ * sobreposição ≥ 50%). Retorna a distância LIVRE aproximada até a viga
+ * paralela vizinha (extensão da laje ⊥ ao vão − bw) e a espessura da mesa
+ * (maciça: h; nervurada: capa).
+ */
+function flankingSlabs(
+  plan: { slabs: { polygon: { x: number; y: number }[]; thickness: number; ribbed?: { topping: number } }[] } | undefined,
+  p0: { x: number; y: number },
+  p1: { x: number; y: number },
+  bw: number,
+): { clearLeft: number | null; clearRight: number | null; hf: number | null } {
+  if (!plan) return { clearLeft: null, clearRight: null, hf: null }
+  const len = Math.hypot(p1.x - p0.x, p1.y - p0.y)
+  if (len < 0.3) return { clearLeft: null, clearRight: null, hf: null }
+  const ux = (p1.x - p0.x) / len
+  const uy = (p1.y - p0.y) / len
+  const nx = -uy
+  const ny = ux
+  const TOLD = 0.05
+  let clearLeft: number | null = null
+  let clearRight: number | null = null
+  let hf: number | null = null
+  for (const slab of plan.slabs) {
+    const poly = slab.polygon
+    for (let e = 0; e < poly.length; e++) {
+      const a = poly[e]
+      const b = poly[(e + 1) % poly.length]
+      // colinearidade com a reta do vão
+      const dA = Math.abs((a.x - p0.x) * nx + (a.y - p0.y) * ny)
+      const dB = Math.abs((b.x - p0.x) * nx + (b.y - p0.y) * ny)
+      if (dA > TOLD || dB > TOLD) continue
+      const t = (p: { x: number; y: number }) => (p.x - p0.x) * ux + (p.y - p0.y) * uy
+      const lo = Math.max(Math.min(t(a), t(b)), 0)
+      const hi = Math.min(Math.max(t(a), t(b)), len)
+      if (hi - lo < 0.5 * len) continue
+      // lado da laje (normal ao vão) + extensão ⊥ (≈ vão livre + bw)
+      const ds = poly.map((p) => (p.x - p0.x) * nx + (p.y - p0.y) * ny)
+      const dMin = Math.min(...ds)
+      const dMax = Math.max(...ds)
+      const side = dMax > -dMin ? 1 : -1
+      const clear = Math.max(dMax - dMin - bw, 0)
+      if (clear < 0.1) continue
+      const hSlab = slab.ribbed ? slab.ribbed.topping : slab.thickness
+      if (side > 0) clearLeft = Math.max(clearLeft ?? 0, clear)
+      else clearRight = Math.max(clearRight ?? 0, clear)
+      hf = hf === null ? hSlab : Math.min(hf, hSlab)
+    }
+  }
+  return { clearLeft, clearRight, hf }
+}
+
+// ---------------------------------------------------------------------------
 // dimensionamento de vigas (por vão) — NBR 6118
 // ---------------------------------------------------------------------------
 
@@ -841,6 +898,26 @@ function designBeams(
       return { zero, half }
     }
 
+    // mesa colaborante do positivo (§14.6.2.2): lajes coladas ao vão
+    const beamIdT = first.ref.kind === 'beam' ? first.ref.sourceId : ''
+    const planOfBeam = project.plans.find((pl) => pl.beams.some((b) => b.id === beamIdT))
+    const pSpan0 = model.nodes[first.ni]
+    const lastM = model.members[memberIds[memberIds.length - 1]]
+    const pSpan1 = model.nodes[lastM.nj]
+    const flank = flankingSlabs(planOfBeam, pSpan0, pSpan1, bw)
+    const contEnds = ((mdNegLeft > 0.5 ? 1 : 0) + (mdNegRight > 0.5 ? 1 : 0)) as 0 | 1 | 2
+    const fl =
+      flank.hf !== null && flank.hf < h
+        ? effectiveFlange({
+            bw,
+            spanLength: length,
+            continuousEnds: contEnds,
+            clearLeft: flank.clearLeft,
+            clearRight: flank.clearRight,
+          })
+        : null
+    const flange = fl && fl.bf > bw + 0.02 ? { bf: fl.bf, hf: flank.hf! } : null
+
     const flexInput = { bw, h, d, fcd: cp.fcd, fyd: fydV, fck: cp.fck }
     const mkFlex = (md: number): FlexureDesign => {
       const r = designBeamFlexure({ md, ...flexInput })
@@ -859,7 +936,27 @@ function designBeams(
         note: r.note,
       }
     }
-    const positive = mkFlex(mdPos)
+    const mkFlexT = (md: number): FlexureDesign => {
+      if (!flange) return mkFlex(md)
+      const r = designTBeamFlexure({ md, bw, bf: flange.bf, hf: flange.hf, h, d, fcd: cp.fcd, fyd: fydV, fck: cp.fck })
+      const asFinal = Math.max(r.as, r.asMin)
+      const bars = pickBars(asFinal, bw, cover)
+      const noteT = `Mesa colaborante bf = ${Math.round(flange.bf * 100)} cm (§14.6.2.2)${r.flangeOnly ? '' : ' — LN na alma'}`
+      return {
+        md,
+        as: asFinal,
+        asProvided: bars.asProvided,
+        asMin: r.asMin,
+        xd: r.xd,
+        flange,
+        bars: bars.spec,
+        barsN: bars.n,
+        barsPhi: bars.phi,
+        ok: r.ok,
+        note: r.note ? `${noteT}; ${r.note}` : noteT,
+      }
+    }
+    const positive = mkFlexT(mdPos)
     const withCut = (f: FlexureDesign, fromLeft: boolean, mdSup: number): FlexureDesign => {
       const c = cutDist(fromLeft, mdSup)
       return { ...f, cutZero: c.zero, cutHalf: c.half }

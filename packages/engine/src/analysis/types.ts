@@ -220,6 +220,8 @@ export interface FlexureDesign {
   asMin: number
   /** profundidade relativa da LN */
   xd: number
+  /** mesa colaborante usada no positivo (§14.6.2.2) — ausente = retangular */
+  flange?: { bf: number; hf: number }
   /** arranjo sugerido, ex.: "3 φ 12.5" */
   bars: string
   barsN: number

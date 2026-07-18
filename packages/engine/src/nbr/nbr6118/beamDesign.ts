@@ -28,7 +28,7 @@ const RHO_MIN: { fckMPa: number; rho: number }[] = [
   { fckMPa: 50, rho: 0.00208 },
 ]
 
-function rhoMin(fckMPa: number): number {
+export function rhoMin(fckMPa: number): number {
   const first = RHO_MIN[0]
   const last = RHO_MIN[RHO_MIN.length - 1]
   if (fckMPa <= first.fckMPa) return first.rho

@@ -387,6 +387,25 @@
   ≈ w·l²/8 = 20 kN·m/m, M+ ≈ 9/128·w·l², Σreações = carga total; a grelha
   por laje rotulada reporta < 70% do negativo real — 7 testes novos, 354 total
 
+## v0.2.22 — Mesa colaborante (seção T §14.6.2.2) ✅
+
+- [x] `effectiveFlange`: bf = bw + Σ mín(0,5·b2; 0,10·a) por lado com laje;
+  a = l / 0,75·l / 0,60·l conforme continuidade do vão (detectada pelos
+  negativos reais da envoltória)
+- [x] `designTBeamFlexure` (§17): tenta retangular bf (LN na mesa); senão
+  decompõe abas (Mf = 0,85·fcd·(bf−bw)·hf·(d−hf/2)) + alma retangular bw;
+  x/d ≤ 0,45; As mínima na alma
+- [x] analyze/designBeams: detecção automática das lajes coladas ao vão
+  (borda colinear ≥ 50%, por lado; nervurada usa a capa como hf), distância
+  livre b2 ≈ extensão ⊥ da laje − bw; POSITIVO usa a seção T (campo
+  `flange` + nota "Mesa colaborante bf = … (§14.6.2.2)"); negativos seguem
+  retangulares (mesa tracionada)
+- [x] Âncoras: bf 92 cm p/ bw 20/vão 6 m contínuo; Md 200 ⇒ As 8,74 cm²
+  (T) vs 9,79 cm² (retangular) — economia ~11%; LN na alma Md 420 ⇒
+  As 20,44 cm² — 7 testes novos, 361 no total
+- [ ] Futuro: inércia T também na ANÁLISE (rigidez do pórtico) — hoje o
+  pórtico segue retangular (conservador p/ flechas)
+
 ## Backlog técnico consolidado (18/07/2026 — direcionamentos do Cândido)
 
 > Prioridade nova: **fundações como ELEMENTOS do modelo** (hoje são só resultado
@@ -400,7 +419,7 @@
 2. ✅ Armação de LAJES em planta (v0.2.20)
 3. ✅ Grelha de pavimento unificada (v0.2.21) — continuidade real entre lajes
    + vigas flexíveis; restam nervuradas na unificada (hoje seguem por laje)
-4. Mesa colaborante das vigas (seção T, §14.6.2.2) — economia real de armadura
+4. ✅ Mesa colaborante das vigas (v0.2.22) — falta só a inércia T na análise
 5. Núcleo rígido / pilar-parede (§15.9) — a maior parede funcional
 6. Pilares executivos (arranques, emendas por tramo, croqui)
 7. Refinamentos de análise: P-Δ real, excentricidade de vento ±7,5%,
