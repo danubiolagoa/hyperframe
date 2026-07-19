@@ -18,6 +18,8 @@ import {
 } from '../geometry/geometry'
 import { clipPolygon, overlapArea } from '../geometry/clip'
 import { computeWind } from '../nbr/nbr6123/wind'
+import { flankingSlabs, tSectionInertia } from './flange'
+import { rectSectionProps } from './frame3d'
 import { notionalLoads, windNotionalRule } from '../nbr/nbr6118/imperfections'
 import type { WindGeometry } from '../nbr/api'
 import type { AMember, ANode, AnalysisModel, CaseId, Vec3 } from './types'
@@ -293,8 +295,12 @@ export function buildAnalysisModel(project: Project): {
     }
   }
 
-  // vigas: uma barra por pedaço (seção do trecho)
+  // vigas: uma barra por pedaço (seção do trecho); rigidez com MESA COLABORANTE
+  // (§14.6.2.2 — Iz da seção T bruta quando há laje colada; a = 0,75·l típico;
+  // área p/ peso próprio segue retangular, a laje já pesa por conta própria)
+  let tStiffened = 0
   for (const [li, pieces] of piecesByLevel) {
+    const planT = project.plans.find((pl) => pl.id === levels[li]?.planId)
     for (const pc of pieces) {
       const ni = getNode(li, pc.a)
       const nj = getNode(li, pc.b)
@@ -304,6 +310,27 @@ export function buildAnalysisModel(project: Project): {
       const xL: Vec3 = [dx / L, dy / L, 0]
       const yL: Vec3 = [0, 0, 1]
       const zL: Vec3 = [dy / L, -dx / L, 0]
+      let propsT: AMember['props'] | undefined
+      if (planT) {
+        const fl = flankingSlabs(planT, pc.a, pc.b, pc.section.bw)
+        if (fl.hf !== null && fl.hf < pc.section.h) {
+          const a075 = 0.75 * L
+          const sideB = (c: number | null): number =>
+            c === null || c <= 0 ? 0 : Math.min(0.5 * c, 0.1 * a075)
+          const bf = pc.section.bw + sideB(fl.clearLeft) + sideB(fl.clearRight)
+          if (bf > pc.section.bw + 0.02) {
+            const { bw, h } = pc.section
+            propsT = {
+              A: bw * h,
+              Iy: (h * bw ** 3) / 12,
+              Iz: tSectionInertia(bw, h, bf, fl.hf),
+              J: rectSectionProps(bw, h).J,
+              perimeter: 2 * (bw + h),
+            }
+            tStiffened++
+          }
+        }
+      }
       const m = addMember(
         ni,
         nj,
@@ -312,9 +339,15 @@ export function buildAnalysisModel(project: Project): {
         xL,
         yL,
         zL,
+        propsT,
       )
       memberArc.set(m.id, { s0: pc.s0, s1: pc.s1 })
     }
+  }
+  if (tStiffened > 0) {
+    warnings.push(
+      `Rigidez das vigas com mesa colaborante (§14.6.2.2) em ${tStiffened} trecho(s) — flechas e distribuição de esforços mais realistas.`,
+    )
   }
 
   // ------------------------------------ molas de Winkler nos baldrames
@@ -744,10 +777,15 @@ export function buildAnalysisModel(project: Project): {
         const caseId: CaseId = `W${wd.dir}` as CaseId
         const sign = wd.dir === 'XN' || wd.dir === 'YN' ? -1 : 1
         const dof = wd.dir.startsWith('X') ? 0 : 1
+        // excentricidade da resultante: e = 7,5% da largura da face (NBR 6123
+        // §6.6 — sem efeito de vizinhança) ⇒ torção no diafragma. Sinal único
+        // por caso; a envoltória ±X/±Y cobre os dois giros em plantas ~simétricas.
+        const eTor = 0.075 * (wd.dir.startsWith('X') ? ly : lx)
         for (const lf of wd.perLevel) {
           const master = masterByLevel.get(lf.levelIndex)
           if (master !== undefined) {
             nodalLoads[caseId].push({ node: master, dof, value: sign * lf.F })
+            nodalLoads[caseId].push({ node: master, dof: 5, value: sign * lf.F * eTor })
           } else {
             const lvlNodes = nodes.filter(
               (nd) => nd.levelIndex === lf.levelIndex && nd.kind === 'structural',
@@ -765,6 +803,9 @@ export function buildAnalysisModel(project: Project): {
           )
         }
       }
+      warnings.push(
+        'Vento com excentricidade de 7,5% da face (torção no diafragma, NBR 6123 §6.6) — plantas muito assimétricas: verificar o giro oposto.',
+      )
     } else {
       warnings.push('Vento habilitado, mas o modelo não tem geometria em planta suficiente.')
     }

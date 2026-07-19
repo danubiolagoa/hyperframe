@@ -11,6 +11,7 @@ import {
   skinReinforcement,
 } from './nbr/nbr6118/beamDesign'
 import { effectiveFlange, designTBeamFlexure } from './nbr/nbr6118/tSection'
+import { flankingSlabs } from './analysis/flange'
 import { gammaZ, alphaParam } from './nbr/nbr6118/stability'
 import { DRIFT_STORY_RATIO, DRIFT_TOP_RATIO } from './nbr/api'
 import { runColumnDesign } from './design/columnRun'
@@ -753,62 +754,6 @@ function applySecondOrderAmplification(
 }
 
 // ---------------------------------------------------------------------------
-// mesa colaborante (§14.6.2.2): lajes adjacentes ao trecho do vão
-// ---------------------------------------------------------------------------
-
-/**
- * Procura laje colada ao segmento do vão em cada lado (borda colinear com
- * sobreposição ≥ 50%). Retorna a distância LIVRE aproximada até a viga
- * paralela vizinha (extensão da laje ⊥ ao vão − bw) e a espessura da mesa
- * (maciça: h; nervurada: capa).
- */
-function flankingSlabs(
-  plan: { slabs: { polygon: { x: number; y: number }[]; thickness: number; ribbed?: { topping: number } }[] } | undefined,
-  p0: { x: number; y: number },
-  p1: { x: number; y: number },
-  bw: number,
-): { clearLeft: number | null; clearRight: number | null; hf: number | null } {
-  if (!plan) return { clearLeft: null, clearRight: null, hf: null }
-  const len = Math.hypot(p1.x - p0.x, p1.y - p0.y)
-  if (len < 0.3) return { clearLeft: null, clearRight: null, hf: null }
-  const ux = (p1.x - p0.x) / len
-  const uy = (p1.y - p0.y) / len
-  const nx = -uy
-  const ny = ux
-  const TOLD = 0.05
-  let clearLeft: number | null = null
-  let clearRight: number | null = null
-  let hf: number | null = null
-  for (const slab of plan.slabs) {
-    const poly = slab.polygon
-    for (let e = 0; e < poly.length; e++) {
-      const a = poly[e]
-      const b = poly[(e + 1) % poly.length]
-      // colinearidade com a reta do vão
-      const dA = Math.abs((a.x - p0.x) * nx + (a.y - p0.y) * ny)
-      const dB = Math.abs((b.x - p0.x) * nx + (b.y - p0.y) * ny)
-      if (dA > TOLD || dB > TOLD) continue
-      const t = (p: { x: number; y: number }) => (p.x - p0.x) * ux + (p.y - p0.y) * uy
-      const lo = Math.max(Math.min(t(a), t(b)), 0)
-      const hi = Math.min(Math.max(t(a), t(b)), len)
-      if (hi - lo < 0.5 * len) continue
-      // lado da laje (normal ao vão) + extensão ⊥ (≈ vão livre + bw)
-      const ds = poly.map((p) => (p.x - p0.x) * nx + (p.y - p0.y) * ny)
-      const dMin = Math.min(...ds)
-      const dMax = Math.max(...ds)
-      const side = dMax > -dMin ? 1 : -1
-      const clear = Math.max(dMax - dMin - bw, 0)
-      if (clear < 0.1) continue
-      const hSlab = slab.ribbed ? slab.ribbed.topping : slab.thickness
-      if (side > 0) clearLeft = Math.max(clearLeft ?? 0, clear)
-      else clearRight = Math.max(clearRight ?? 0, clear)
-      hf = hf === null ? hSlab : Math.min(hf, hSlab)
-    }
-  }
-  return { clearLeft, clearRight, hf }
-}
-
-// ---------------------------------------------------------------------------
 // dimensionamento de vigas (por vão) — NBR 6118
 // ---------------------------------------------------------------------------
 
@@ -866,8 +811,16 @@ function designBeams(
     }
     const firstEnv = env.Mz[memberIds[0]]
     const lastEnv = env.Mz[memberIds[memberIds.length - 1]]
-    const mdNegLeft = Math.max(0, -firstEnv.min[0])
-    const mdNegRight = Math.max(0, -lastEnv.min[lastEnv.min.length - 1])
+    // redistribuição de negativos (§14.6.4.3): M⁻ ← δ·M⁻ e o alívio médio
+    // volta ao vão (equilíbrio); validade exige x/d ≤ (δ − 0,44)/1,25 (fck ≤ 50)
+    const deltaRed = Math.min(1, Math.max(0.75, project.settings.momentRedistribution ?? 1))
+    const mdNegLeftRaw = Math.max(0, -firstEnv.min[0])
+    const mdNegRightRaw = Math.max(0, -lastEnv.min[lastEnv.min.length - 1])
+    const mdNegLeft = mdNegLeftRaw * deltaRed
+    const mdNegRight = mdNegRightRaw * deltaRed
+    if (deltaRed < 1) {
+      mdPos += ((mdNegLeftRaw - mdNegLeft) + (mdNegRightRaw - mdNegRight)) / 2
+    }
 
     // envoltória de Mz amostrada ao longo do vão (x desde o apoio esquerdo)
     // → pontos de corte REAIS dos negativos: momento nulo e 50% do momento
@@ -961,8 +914,17 @@ function designBeams(
       const c = cutDist(fromLeft, mdSup)
       return { ...f, cutZero: c.zero, cutHalf: c.half }
     }
-    const negLeft = mdNegLeft > 0.5 ? withCut(mkFlex(mdNegLeft), true, mdNegLeft) : null
-    const negRight = mdNegRight > 0.5 ? withCut(mkFlex(mdNegRight), false, mdNegRight) : null
+    const xdLimRed = (deltaRed - 0.44) / 1.25
+    const withRed = (f: FlexureDesign | null): FlexureDesign | null => {
+      if (!f || deltaRed >= 1) return f
+      const okRed = f.xd <= xdLimRed + 1e-9
+      const note = `redistribuição δ = ${deltaRed.toFixed(2)} (§14.6.4.3)${okRed ? '' : ` — x/d = ${f.xd.toFixed(2)} > ${xdLimRed.toFixed(2)}: NÃO permitida, aumente a seção ou δ`}`
+      return { ...f, ok: f.ok && okRed, note: f.note ? `${f.note}; ${note}` : note }
+    }
+    const negLeft =
+      mdNegLeft > 0.5 ? withRed(withCut(mkFlex(mdNegLeft), true, mdNegLeft)) : null
+    const negRight =
+      mdNegRight > 0.5 ? withRed(withCut(mkFlex(mdNegRight), false, mdNegRight)) : null
 
     const shearR = designBeamShear({
       vd,

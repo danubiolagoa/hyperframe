@@ -426,6 +426,11 @@ export interface ProjectSettings {
   stiffnessReduction: { beams: number; columns: number }
   /** redutor de rigidez à torção das vigas (torção de compatibilidade) */
   torsionFactor: number
+  /**
+   * redistribuição de momentos negativos das vigas (§14.6.4.3): δ ∈ [0,75; 1].
+   * 1 (ou ausente) = sem redistribuição. Nós móveis: usar δ ≥ 0,90.
+   */
+  momentRedistribution?: number
   considerSelfWeight: boolean
   /** peso específico do concreto armado, kN/m³ */
   concreteUnitWeight: number

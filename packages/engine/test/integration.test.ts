@@ -109,17 +109,33 @@ describe('análise — equilíbrio global', () => {
     expect(applied).toBeGreaterThan(0)
   })
 
-  it('diafragma rígido: nós do pavimento transladam igualmente sob vento', () => {
+  it('diafragma rígido: cinemática de corpo rígido sob vento (com torção de 7,5%)', () => {
     const project = tinyBuilding(true)
     const results = analyze(project)
     const wxp = results.cases.elu.WXP!
     const topNodes = results.model.nodes.filter(
       (n) => n.levelIndex === 1 && n.kind === 'structural',
     )
+    // v0.2.25: vento com excentricidade de 7,5% ⇒ torção INTENCIONAL no
+    // diafragma. A cinemática mestre-escravo exige ux_i = ux_j − rz·(y_i − y_j)
+    // p/ qualquer par (corpo rígido), com rz ≠ 0 e translação no sentido do vento.
     const ux = topNodes.map((n) => wxp.displacements[n.id][0])
-    // estrutura simétrica → sem torção → ux idênticos
-    for (const u of ux) expect(u).toBeCloseTo(ux[0], 9)
-    expect(ux[0]).toBeGreaterThan(0) // move no sentido do vento
+    const ys = topNodes.map((n) => n.y)
+    const ref = 0
+    let rzEst: number | null = null
+    for (let i = 1; i < topNodes.length; i++) {
+      if (Math.abs(ys[i] - ys[ref]) < 1e-9) {
+        // mesmo y ⇒ mesmo ux
+        expect(ux[i]).toBeCloseTo(ux[ref], 9)
+      } else {
+        const rz = -(ux[i] - ux[ref]) / (ys[i] - ys[ref])
+        if (rzEst === null) rzEst = rz
+        else expect(rz).toBeCloseTo(rzEst, 9) // rotação única do diafragma
+      }
+    }
+    expect(rzEst).not.toBeNull()
+    expect(Math.abs(rzEst!)).toBeGreaterThan(1e-9) // torção da excentricidade presente
+    for (const u of ux) expect(u).toBeGreaterThan(0) // sentido do vento
   })
 })
 

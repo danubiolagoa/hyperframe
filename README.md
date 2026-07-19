@@ -5,9 +5,9 @@ macOS + Windows (Tauri) e navegador. Alternativa moderna e aberta aos softwares
 estruturais tradicionais do mercado — **100% open source**, com binários por
 sistema e código-fonte no site.
 
-![status](https://img.shields.io/badge/vers%C3%A3o-0.2.24-orange) ![tests](https://img.shields.io/badge/testes-372%20passando-brightgreen)
+![status](https://img.shields.io/badge/vers%C3%A3o-0.2.25-orange) ![tests](https://img.shields.io/badge/testes-377%20passando-brightgreen)
 
-## O que já faz (v0.2.24)
+## O que já faz (v0.2.25)
 
 - **Modelagem 2D em planta** (estilo planta de forma): eixos com bulbos, pilares
   (**retangulares, circulares e em L**, rotação 0/90/180/270°, **nascendo/morrendo em
@@ -28,8 +28,8 @@ sistema e código-fonte no site.
   (ELU com 0,4/0,8·Eci·Ic — NBR 6118 §15.7.3 — e ELS integral)
 - **Cargas e combinações**: peso próprio, NBR 6120 (presets), quinhões de laje a 45°
   **ou pelas reações da grelha** (método selecionável), vento NBR 6123 (S1/S2/S3, Ca estimado da Fig. 4, editável), **desaprumo global**
-  (§11.3.3.4.1, combinado ao vento pela regra da norma), 13 combinações ELU + 6 ELS
-  (NBR 8681)
+  (§11.3.3.4.1, combinado ao vento pela regra da norma), **excentricidade do vento de 7,5% da face** (torção no diafragma, NBR 6123 §6.6), 13 combinações ELU + 6 ELS
+  (NBR 8681), **rigidez das vigas com mesa colaborante** (§14.6.2.2 — inércia T no pórtico) e **redistribuição opcional de M⁻ das vigas** (§14.6.4.3, δ 0,75–1 com verificação de x/d)
 - **Estabilidade e serviço**: γz e parâmetro α (§15.5), **2ª ordem global aproximada
   0,95·γz** (§15.7.2), deslocamentos laterais (tab. 13.3), **flechas de vigas e lajes**
   (Branson + fluência, L/250), **fissuração ELS-W** (wk vs tab. 13.4)
@@ -127,7 +127,7 @@ packages/engine     # núcleo puro TypeScript (zero dependências)
   src/drawing       # pranchas (primitivas neutras → SVG/DXF)
   src/dxf           # parser (underlay) e writer (R12) de DXF próprios
   src/report        # memorial de cálculo em PDF (writer PDF próprio, zero deps)
-  test              # 372 testes (âncoras analíticas, normas, equilíbrio global)
+  test              # 377 testes (âncoras analíticas, normas, equilíbrio global)
 apps/desktop        # Tauri 2 + React 19 + three.js
   src/editor2d      # editor de planta SVG (snap, ferramentas, camadas, underlay)
   src/viewer3d      # visualizador 3D (R3F): edifício, deformada, diagramas

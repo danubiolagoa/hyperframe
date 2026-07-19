@@ -437,6 +437,26 @@
 - [x] 5 testes (traspasse = tramos − 1, estribos ≥ Σ real, pontos da seção
   = barsN, C = pé-direito + lap) — 372 no total
 
+## v0.2.25 — Refinamentos de análise (item 7) ✅
+
+- [x] **Inércia T no pórtico** (§14.6.2.2): vigas com laje colada ganham
+  `props` com Iz da seção T bruta (a = 0,75·l típico; área p/ peso próprio
+  segue retangular — a laje já pesa por conta própria); flechas e
+  distribuição de esforços mais realistas (aviso no modelo)
+- [x] **Excentricidade do vento 7,5% da face** (NBR 6123 §6.6): momento
+  torsor no nó mestre do diafragma por pavimento (sinal único por caso; a
+  envoltória ±X/±Y cobre os dois giros em plantas ~simétricas — nota p/
+  plantas muito assimétricas); teste do diafragma atualizado p/ cinemática
+  de corpo rígido COM rotação
+- [x] **Redistribuição de M⁻ das vigas** (§14.6.4.3): δ ∈ [0,75; 1] nas
+  configurações (padrão = sem); alívio médio volta ao vão (equilíbrio) e
+  x/d ≤ (δ − 0,44)/1,25 verificado por apoio (falha se violado)
+- [x] γz > 1,30 já tinha guarda ('inválido' + aviso de P-Δ rigoroso) ✓
+- [x] 6 testes novos (I_T = 0,006473 m⁴ = 1,80× retangular; δ = 0,85 nos
+  negativos com alívio no vão; rz ≠ 0 no diafragma) — 377 no total
+- [ ] Fica p/ o futuro: P-Δ iterativo por combinação (γz cobre §15.7.2 até
+  1,30), Ca da Fig. 4 digitalizado, quinhão trapezoidal explícito no Marcus
+
 ## Backlog técnico consolidado (18/07/2026 — direcionamentos do Cândido)
 
 > Prioridade nova: **fundações como ELEMENTOS do modelo** (hoje são só resultado
@@ -453,8 +473,9 @@
 4. ✅ Mesa colaborante das vigas (v0.2.22) — falta só a inércia T na análise
 5. ✅ Núcleo rígido / pilar-parede (v0.2.23) — restam abas de L como paredes
 6. ✅ Pilares executivos (v0.2.24)
-7. Refinamentos de análise: P-Δ real, excentricidade de vento ±7,5%,
-   redistribuição (§14.6.4.3), Ca da Fig. 4 digitalizado, trapezoidal no Marcus
+7. ✅ Refinamentos de análise (v0.2.25): inércia T no pórtico, vento c/
+   excentricidade 7,5%, redistribuição §14.6.4.3. Futuro: P-Δ iterativo,
+   Ca Fig. 4 digitalizado, trapezoidal no Marcus
 8. FUTURO (decisão 18/07): vibração de piso §23.3, vento dinâmico (cap. 9),
    sismo NBR 15421, treliçadas, protensão, aço NBR 8800
 

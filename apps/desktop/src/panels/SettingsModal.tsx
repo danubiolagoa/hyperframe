@@ -1036,6 +1036,20 @@ export default function SettingsModal() {
                 />
               </div>
               <div className="field">
+                <label className="label">Redistribuição de M⁻ das vigas — δ (§14.6.4.3; 1 = sem)</label>
+                <NumberField
+                  value={st.momentRedistribution ?? 1}
+                  digits={2}
+                  min={0.75}
+                  max={1}
+                  style={{ width: '100%' }}
+                  onCommit={(v) => updateSettings({ momentRedistribution: v >= 0.995 ? undefined : v })}
+                />
+                <div className="faint" style={{ fontSize: 10, marginTop: 2 }}>
+                  Nós móveis (γz &gt; 1,10): usar δ ≥ 0,90. Alívio volta ao vão; x/d verificado.
+                </div>
+              </div>
+              <div className="field">
                 <label className="label">Peso específico (kN/m³)</label>
                 <NumberField
                   value={st.concreteUnitWeight}
