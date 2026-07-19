@@ -625,6 +625,15 @@ function PilaresTab({ results }: { results: AnalysisResults }) {
                 <td style={{ fontWeight: 600 }}>{c.name}</td>
                 <td>
                   {c.sectionLabel}
+                  {c.wall && (
+                    <span
+                      className="faint"
+                      style={{ marginLeft: 6, fontSize: 10 }}
+                      title={`Pilar-parede §15.9: ${c.wall.laminas} lâminas · λ ${c.wall.lambdaMax.toFixed(0)} · vert. ${c.wall.vSpec} · horiz. ${c.wall.hSpec}`}
+                    >
+                      PAREDE
+                    </span>
+                  )}
                 </td>
                 <td>{fmt(c.nd, 0)}</td>
                 <td>

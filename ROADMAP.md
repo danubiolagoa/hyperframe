@@ -406,6 +406,23 @@
 - [ ] Futuro: inércia T também na ANÁLISE (rigidez do pórtico) — hoje o
   pórtico segue retangular (conservador p/ flechas)
 
+## v0.2.23 — Pilar-parede / núcleo rígido (§15.9 + §18.5) ✅
+
+- [x] `designWallColumn`: parede (maior dimensão > 5× espessura) decomposta em
+  LÂMINAS de ≈ 3·h (§15.9.3); N por lâmina pela distribuição linear
+  σ = N/A ± M_forte·y/I (flexão forte vira diferença de normais); esbeltez
+  local λi = 3,46·le/h na espessura com momento mínimo + pilar-padrão; quinhão
+  do momento fraco por largura; lâmina TRACIONADA vira tirante (As = |N|/fyd)
+- [x] Mínimos §18.5: malha vertical por face (passo ≤ mín(20 cm; 2·h)) e
+  horizontal ≥ máx(25% da vertical; 0,15%·Ac) por metro — specs prontas
+- [x] columnRun: detecção automática (retangular com razão > 5); As das
+  lâminas vira PISO do dimensionamento à flexo-composta oblíqua (interação
+  continua valendo p/ desenho); λ > 90 ⇒ método rigoroso (nota); seção L com
+  aba > 5× ganha alerta p/ verificação por abas
+- [x] UI: tag "PAREDE" na aba Pilares com tooltip (lâminas, λ, malhas)
+- [x] Âncoras: parede 150×25 ⇒ 2 lâminas de 75 com N 2400/600 (Σ ✓),
+  λ = 38,8, tirante de borda −1500 kN — 6 testes novos, 367 no total
+
 ## Backlog técnico consolidado (18/07/2026 — direcionamentos do Cândido)
 
 > Prioridade nova: **fundações como ELEMENTOS do modelo** (hoje são só resultado
@@ -420,7 +437,7 @@
 3. ✅ Grelha de pavimento unificada (v0.2.21) — continuidade real entre lajes
    + vigas flexíveis; restam nervuradas na unificada (hoje seguem por laje)
 4. ✅ Mesa colaborante das vigas (v0.2.22) — falta só a inércia T na análise
-5. Núcleo rígido / pilar-parede (§15.9) — a maior parede funcional
+5. ✅ Núcleo rígido / pilar-parede (v0.2.23) — restam abas de L como paredes
 6. Pilares executivos (arranques, emendas por tramo, croqui)
 7. Refinamentos de análise: P-Δ real, excentricidade de vento ±7,5%,
    redistribuição (§14.6.4.3), Ca da Fig. 4 digitalizado, trapezoidal no Marcus

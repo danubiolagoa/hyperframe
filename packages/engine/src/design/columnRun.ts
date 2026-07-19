@@ -15,6 +15,7 @@ import {
   type ColumnDemandPoint,
   type ColumnSectionDef,
 } from '../nbr/nbr6118/columnDesign'
+import { designWallColumn, type WallColumnOutput } from '../nbr/nbr6118/wallColumn'
 
 /**
  * Dimensionamento de todos os pilares: para cada tramo e combinação ELU,
@@ -138,17 +139,59 @@ export function runColumnDesign(
     const needsRigorous = raw.some((d) => d.needsRigorous)
 
     const asMin = Math.max((0.15 * ndMax) / fydV, 0.004 * ac)
-    const design = designColumnSection(sec, demands, asMin)
+
+    // ---- pilar-parede (§15.9): maior dimensão > 5× a espessura ----
+    const isWallRect = info.kind === 'rect' && Math.max(info.bu, info.bv) / info.minDim > 5
+    const leMax = Math.max(...memberIds.map((mi) => model.members[mi].length))
+    let wall: WallColumnOutput | null = null
+    if (isWallRect) {
+      const longU = info.bu >= info.bv
+      for (const d of demands) {
+        const cand = designWallColumn({
+          length: Math.max(info.bu, info.bv),
+          thickness: info.minDim,
+          le: leMax,
+          nd: d.nd,
+          mStrong: longU ? d.mu : d.mv,
+          mWeak: longU ? d.mv : d.mu,
+          cover,
+          fcd: cp.fcd,
+          fyd: fydV,
+          es: project.settings.steel.Es,
+        })
+        if (!wall || cand.asTotal > wall.asTotal) wall = cand
+      }
+    }
+
+    const design = designColumnSection(sec, demands, Math.max(asMin, wall?.asTotal ?? 0))
 
     const worst = demands.reduce((b, d) => (d.nd > b.nd ? d : b), demands[0])
     const notes = [...design.notes]
+    if (wall) notes.push(...wall.notes)
+    if (info.kind === 'L' && col.section.shape === 'L') {
+      const legRatio = Math.max(
+        col.section.b / col.section.th,
+        col.section.h / col.section.tb,
+      )
+      if (legRatio > 5) {
+        notes.push(
+          'Núcleo em L com aba > 5× a espessura — verificação de lâminas (§15.9) aproximada não aplicada a seções L; conferir as abas como paredes isoladas.',
+        )
+      }
+    }
     if (needsRigorous) {
       notes.push('λ > 90 — o pilar exige método rigoroso de 2ª ordem (fora do escopo v0.2).')
     }
 
     let status: ColumnDesignResult['status'] = 'ok'
-    if (!design.ok) status = 'falha'
-    else if (needsRigorous || design.utilization > 0.9 || design.rho > 0.03) status = 'atencao'
+    if (!design.ok || (wall && !wall.ok)) status = 'falha'
+    else if (
+      needsRigorous ||
+      design.utilization > 0.9 ||
+      design.rho > 0.03 ||
+      (wall && (wall.needsRigorous || wall.tensionEdge))
+    )
+      status = 'atencao'
 
     out.push({
       columnId: col.id,
@@ -175,6 +218,18 @@ export function runColumnDesign(
       governing: design.governing,
       status,
       notes,
+      wall: wall
+        ? {
+            length: Math.max(info.bu, info.bv),
+            thickness: info.minDim,
+            laminas: wall.laminas.length,
+            lambdaMax: wall.lambdaMax,
+            vSpec: wall.vSpec,
+            hSpec: wall.hSpec,
+            asTotal: wall.asTotal,
+            tensionEdge: wall.tensionEdge,
+          }
+        : undefined,
     })
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true }))

@@ -330,6 +330,18 @@ export interface ColumnDesignResult {
   governing: string
   status: 'ok' | 'atencao' | 'falha'
   notes: string[]
+  /** pilar-parede (§15.9): decomposição em lâminas e mínimos §18.5 */
+  wall?: {
+    length: number
+    thickness: number
+    laminas: number
+    lambdaMax: number
+    vSpec: string
+    hSpec: string
+    asTotal: number
+    tensionEdge: boolean
+  }
+
 }
 
 export interface SlabEdgeInfo {

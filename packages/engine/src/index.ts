@@ -144,6 +144,12 @@ export {
   type RibbedGeometryInfo,
 } from './nbr/nbr6118/ribbedSlab'
 export { checkPunching, type PunchingInput, type PunchingOutput } from './nbr/nbr6118/punching'
+export {
+  designWallColumn,
+  type WallColumnInput,
+  type WallColumnOutput,
+  type WallLamina,
+} from './nbr/nbr6118/wallColumn'
 export { designCaisson, type CaissonInput, type CaissonResult } from './nbr/nbr6122/caisson'
 export {
   designStrapBeam,
